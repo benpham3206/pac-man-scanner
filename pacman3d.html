@@ -551,7 +551,6 @@
                             });
                         }
                     } else if (state.scanMode === 'beam') {
-                    } else if (state.scanMode === 'beam') {
                         // Sonar Pulse: Expanding closed circles (rings)
                         // Similar to spiral, but emits full circles at current radius
                         const speed = 0.015; // Speed of expansion
@@ -586,8 +585,8 @@
                         }
                     } else if (state.scanMode === 'line') {
                         // Line scan - toggle between horizontal and vertical with T
-                        for (let i = 0; i < 30; i++) {
-                            const offset = (i / 30 - 0.5) * Math.PI / 2;
+                        for (let i = 0; i < 100; i++) {
+                            const offset = (i / 100 - 0.5) * Math.PI * 0.9; // Nearly full 180 degree FOV
                             if (state.lineHorizontal) {
                                 dirs.push({ h: state.yaw + offset, v: state.pitch });
                             } else {
@@ -741,7 +740,9 @@
                                 // Pellets: yellow normal, red power
                                 // Generate multiple points for dense visibility
                                 for (let i = 0; i < 5; i++) {
-                                    const spread = i === 0 ? 0 : 0.04;
+                                    // Scatter points across the entire pellet volume
+                                    // Use pellet radius (0.25) as baseline spread
+                                    const spread = i === 0 ? 0 : 0.25;
                                     wallPoints.push({
                                         x: px + (Math.random() - 0.5) * spread,
                                         y: py + (Math.random() - 0.5) * spread,
