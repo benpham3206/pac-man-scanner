@@ -337,6 +337,7 @@
                     scanning: false,
                     scanMode: 'default',
                     activeSpirals: [0], // Array of active spiral time offsets
+                    activeBeams: [0], // Array of active beam (sonar) time offsets
                     lineHorizontal: true, // Toggle for line scan orientation
                     score: 0,
                     lives: 3,
@@ -454,7 +455,7 @@
                 const onKeyDown = e => {
                     state.keys[e.key.toLowerCase()] = true;
                     if (e.key === 'q') { state.scanMode = 'default'; setScanMode('default'); }
-                    if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); }
+                    if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); state.activeBeams = [0]; }
                     if (e.key === 'r') { state.scanMode = 'spiral'; setScanMode('spiral'); state.activeSpirals = [0]; }
                     if (e.key === 't') {
                         // Always cycle orientation
@@ -550,21 +551,38 @@
                             });
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Simplified flashlight beam - fewer points for performance
-                        const maxAngle = 0.25; // Wide to match ghost size
-                        const pointCount = 25; // Reduced from ~100 to 25
+                    } else if (state.scanMode === 'beam') {
+                        // Sonar Pulse: Expanding closed circles (rings)
+                        // Similar to spiral, but emits full circles at current radius
+                        const speed = 0.015; // Speed of expansion
+                        const pointsPerRing = 40; // Dense ring
+                        const maxRadius = 0.35; // Fixed max size for beam
 
-                        // Center point
-                        dirs.push({ h: state.yaw, v: state.pitch });
+                        // Spawn new pulse if needed
+                        if (state.activeBeams.length === 0 ||
+                            state.activeBeams[state.activeBeams.length - 1] > maxRadius * 0.6) {
+                            state.activeBeams.push(0);
+                        }
 
-                        // Random scatter in cone
-                        for (let i = 0; i < pointCount; i++) {
-                            const r = Math.sqrt(Math.random()) * maxAngle;
-                            const theta = Math.random() * Math.PI * 2;
-                            dirs.push({
-                                h: state.yaw + Math.cos(theta) * r,
-                                v: state.pitch + Math.sin(theta) * r
-                            });
+                        // Update pulses
+                        for (let s = state.activeBeams.length - 1; s >= 0; s--) {
+                            const r = state.activeBeams[s];
+
+                            // Generate full circle at radius r
+                            for (let i = 0; i < pointsPerRing; i++) {
+                                const theta = (i / pointsPerRing) * Math.PI * 2;
+                                dirs.push({
+                                    h: state.yaw + Math.cos(theta) * r,
+                                    v: state.pitch + Math.sin(theta) * r
+                                });
+                            }
+
+                            state.activeBeams[s] += speed;
+
+                            // Remove finished pulses
+                            if (state.activeBeams[s] > maxRadius) {
+                                state.activeBeams.splice(s, 1);
+                            }
                         }
                     } else if (state.scanMode === 'line') {
                         // Line scan - toggle between horizontal and vertical with T
@@ -581,7 +599,22 @@
                         const a = 0.001;
                         const b = 0.015;
                         const pointsPerFrame = 25;
-                        const maxT = 40;
+
+                        // Adaptive Scan Radius: Raycast to find distance to wall
+                        // If close, small radius. If far, large radius.
+                        const centerDir = new THREE.Vector3(0, 0, -1);
+                        centerDir.applyAxisAngle(new THREE.Vector3(1, 0, 0), state.pitch);
+                        centerDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), state.yaw);
+                        raycaster.set(camera.position, centerDir);
+                        const centerHits = raycaster.intersectObjects(colliders, false);
+                        const centerDist = centerHits.length > 0 ? centerHits[0].distance : 30;
+
+                        // Map distance to max radius (approx 0.2 to 0.8 radians)
+                        // Wall at 1m -> 0.2 rad, Wall at 10m+ -> 0.8 rad
+                        const maxRadius = Math.max(0.2, Math.min(0.8, centerDist * 0.08));
+
+                        // Calculate maxT based on maxRadius: r = a + b*t => t = (r-a)/b
+                        const maxT = (maxRadius - a) / b;
                         const spawnThreshold = maxT * 0.7; // Spawn next spiral when current reaches 70%
 
                         // Spawn new spiral if needed
@@ -599,7 +632,7 @@
                             for (let i = 0; i < pointsPerFrame; i++) {
                                 const theta = t + i * 0.15;
                                 const r = a + b * theta;
-                                if (r < 0.6) {
+                                if (r < maxRadius) {
                                     dirs.push({
                                         h: state.yaw + Math.cos(theta) * r,
                                         v: state.pitch + Math.sin(theta) * r
@@ -651,7 +684,7 @@
                                 // Ghost colors - scared = blue, normal = original bold color
                                 let r, g, b;
                                 if (data.scared) {
-                                    r = 0.3; g = 0.5; b = 1.0; // Bright blue when scared
+                                    r = 0.05; g = 0.05; b = 0.8; // Deep Blue when scared
                                 } else {
                                     const c = data.color;
                                     let r0 = ((c >> 16) & 255) / 255;
@@ -706,11 +739,17 @@
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
                                 // Pellets: yellow normal, red power
-                                wallPoints.push({
-                                    x: px, y: py, z: pz,
-                                    r: 1, g: data.isPower ? 0.2 : 1, b: data.isPower ? 0.2 : 0.1,
-                                    pelletId: data.id // Track for removal when collected
-                                });
+                                // Generate multiple points for dense visibility
+                                for (let i = 0; i < 5; i++) {
+                                    const spread = i === 0 ? 0 : 0.04;
+                                    wallPoints.push({
+                                        x: px + (Math.random() - 0.5) * spread,
+                                        y: py + (Math.random() - 0.5) * spread,
+                                        z: pz + (Math.random() - 0.5) * spread,
+                                        r: 1, g: data.isPower ? 0.2 : 1, b: data.isPower ? 0.2 : 0.1,
+                                        pelletId: data.id
+                                    });
+                                }
                             } else {
                                 // Walls = white gradient
                                 const col = distColor(dist);
