@@ -819,7 +819,7 @@
                                                 1, isPower ? 0.2 : 1, isPower ? 0.2 : 0.1
                                             );
                                         }
-                                    } else if (data.type === 'wall' || (isPellet && data.collected)) {
+                                    } else if (['wall', 'ground', 'ceiling'].includes(data.type) || (isPellet && data.collected)) {
                                         // Wall or collected pellet (still visible as wall)
                                         const col = distColor(dist);
                                         addWallPoint(hits[0].point.x, hits[0].point.y, hits[0].point.z, col.r, col.g, col.b);

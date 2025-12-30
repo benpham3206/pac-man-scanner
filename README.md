@@ -13,14 +13,20 @@ A Scanner Sombre-inspired reimagining of the classic PAC-MAN arcade game. Naviga
 - **Power Pellets**: Large pellets that let you eat ghosts temporarily
 
 ### Scan Modes
-| Key | Mode | Description |
-|-----|------|-------------|
-| **Q** | Default | Scattered random pattern |
-| **E** | Beam | Flashlight-style circle that spreads with distance |
-| **R** | Spiral | Archimedes spiral emanating outward |
-| **T** | Line | Horizontal/vertical line (toggles on each press) |
+- **LIDAR Scanning Mechanics**:
+    - **Default (Q)**: 360° Spherical Scan. Scatters points in all directions.
+    - **Beam (E)**: Sonar Pulse. Adaptive expanding rings that loop automatically.
+    - **Spiral (R)**: Adaptive Tunnel. Spawns overlapping segments for a continuous tunnel effect.
+    - **Line (T)**: Sweeping Scanner.
+        - **Horizontal**: Sweeps vertically (Pitch).
+        - **Vertical**: Sweeps horizontally (Yaw).
+- **Adaptive Precision**: Beam and Spiral scans automatically adjust their size (radius) to perfectly cover the 3m wall height based on your distance.
+- **Ring Buffer Optimization**: Efficiently handles 500,000+ points with zero performance drop.
 
 ### Visual Features
+- **Visuals**:
+    - **Ghosts**: Scared ghosts turn Deep Blue.
+    - **Pellets**: High-density scanning (5x points) makes them pop instantly.
 - **Distance-based Colors**: Points closer to you appear brighter
 - **Ghost Point Fade**: Scanned ghost particles fade after 5 seconds
 - **Permanent Pellets**: Scanned pellet locations stay visible
@@ -28,10 +34,11 @@ A Scanner Sombre-inspired reimagining of the classic PAC-MAN arcade game. Naviga
 - **Expanded Map (Tab)**: Hold Tab for fullscreen map overlay
 
 ### Audio
+- **Web Audio**: Immersive soundscape with reverb and directional cues.
 - **Atmospheric Reverb**: Cave-like echo on all sounds
 - **Scan Sounds**: Subtle scanning audio feedback
 - **Ghost Proximity**: Low-frequency hum that intensifies near ghosts
-- **Classic Sounds**: Wakka wakka pellet collection
+- **Classic Sounds**: Wakka-wakka pellet collection
 
 ### Quality of Life
 - **Wall Sliding**: Diagonal movement slides along walls
