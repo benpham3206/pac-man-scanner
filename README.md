@@ -22,7 +22,7 @@ A Scanner Sombre-inspired reimagining of the classic PAC-MAN arcade game. Naviga
 
 ### Visual Features
 - **Distance-based Colors**: Points closer to you appear brighter
-- **Ghost Point Fade**: Scanned ghost particles fade after 10 seconds
+- **Ghost Point Fade**: Scanned ghost particles fade after 5 seconds
 - **Permanent Pellets**: Scanned pellet locations stay visible
 - **Minimap**: Real-time top-down view of scanned areas
 - **Expanded Map (Tab)**: Hold Tab for fullscreen map overlay
