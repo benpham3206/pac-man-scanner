@@ -343,9 +343,10 @@
                     pelletsCollected: 0
                 };
 
-                // Point cloud - permanent wall points, fading pellet points
-                const wallPoints = []; // Permanent
-                const pelletPoints = []; // Fade after 10s
+                // Point cloud - permanent wall/pellet points, fading ghost points
+                const wallPoints = []; // Permanent (walls + pellets)
+                const pelletPoints = []; // Legacy - kept for compatibility
+                const ghostPoints = []; // Fade after 10s
                 const pointGeometry = new THREE.BufferGeometry();
                 const pointMaterial = new THREE.PointsMaterial({
                     size: 3,
@@ -356,7 +357,7 @@
                 pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
                 scene.add(pointCloud);
 
-                const PELLET_FADE_TIME = 600;
+                const GHOST_FADE_TIME = 600; // 10 seconds (in frames at 60fps)
                 let geometryDirty = false;
 
                 const colliders = [];
@@ -540,23 +541,38 @@
                             });
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Random uniform cone distribution (Flashlight)
-                        // Use rejection sampling or polar coordinates with sqrt(r) for uniform disk
-                        const coneAngle = 0.15; // Max radius in radians
-                        const pointsPerFrame = 70;
+                        // Flashlight beam - circle that spreads with distance
+                        // Create concentric rings with slight random variation
+                        const maxAngle = 0.12; // Cone spread in radians
+                        const ringCount = 8;
+                        const centerPoints = 5;
 
-                        for (let i = 0; i < pointsPerFrame; i++) {
-                            // Uniform distribution in a circle: r = sqrt(random) * R
-                            const r = Math.sqrt(Math.random()) * coneAngle;
-                            const theta = Math.random() * Math.PI * 2;
-
-                            const hOffset = Math.cos(theta) * r;
-                            const vOffset = Math.sin(theta) * r;
-
+                        // Center cluster for brightness
+                        for (let i = 0; i < centerPoints; i++) {
+                            const a = Math.random() * Math.PI * 2;
+                            const r = Math.random() * 0.01;
                             dirs.push({
-                                h: state.yaw + hOffset,
-                                v: state.pitch + vOffset
+                                h: state.yaw + Math.cos(a) * r,
+                                v: state.pitch + Math.sin(a) * r
                             });
+                        }
+
+                        // Concentric rings - creates circle at hit distance
+                        for (let ring = 1; ring <= ringCount; ring++) {
+                            const ringRadius = (ring / ringCount) * maxAngle;
+                            const pointsInRing = 6 + ring * 4; // More points on outer rings
+
+                            for (let i = 0; i < pointsInRing; i++) {
+                                const theta = (i / pointsInRing) * Math.PI * 2 + ring * 0.3;
+                                // Add slight noise for organic look
+                                const noise = (Math.random() - 0.5) * 0.015;
+                                const r = ringRadius + noise;
+
+                                dirs.push({
+                                    h: state.yaw + Math.cos(theta) * r,
+                                    v: state.pitch + Math.sin(theta) * r
+                                });
+                            }
                         }
                     } else if (state.scanMode === 'line') {
                         // Line scan - toggle between horizontal and vertical with T
@@ -621,11 +637,12 @@
 
                             if (data.type === 'ghost') {
                                 const c = data.color;
-                                wallPoints.push({
+                                ghostPoints.push({
                                     x: px, y: py, z: pz,
                                     r: ((c >> 16) & 255) / 255,
                                     g: ((c >> 8) & 255) / 255,
-                                    b: (c & 255) / 255
+                                    b: (c & 255) / 255,
+                                    life: GHOST_FADE_TIME // Ghosts fade
                                 });
                                 // Update ghost position for minimap
                                 const existing = gameDataRef.current.scannedGhosts.find(g => g.index === data.index);
@@ -633,7 +650,7 @@
                                     existing.x = hit.object.position.x;
                                     existing.z = hit.object.position.z;
                                     existing.scared = data.scared;
-                                    existing.timestamp = Date.now(); // Update timestamp on re-scan
+                                    existing.timestamp = Date.now();
                                 } else {
                                     gameDataRef.current.scannedGhosts.push({
                                         index: data.index, x: hit.object.position.x, z: hit.object.position.z,
@@ -641,12 +658,10 @@
                                     });
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
-                                // Brighter yellow pellets - more visible
-                                pelletPoints.push({
+                                // Pellets are permanent (yellow)
+                                wallPoints.push({
                                     x: px, y: py, z: pz,
-                                    r: 1, g: 1, b: data.isPower ? 0.6 : 0.1, // Brighter yellow
-                                    life: PELLET_FADE_TIME,
-                                    pelletId: data.id
+                                    r: 1, g: 1, b: data.isPower ? 0.6 : 0.1
                                 });
                             } else {
                                 // Walls = white gradient
@@ -663,10 +678,18 @@
 
                 // Update points
                 const updatePoints = () => {
-                    // Fade pellet points
+                    // Fade ghost points (10 seconds)
+                    for (let i = ghostPoints.length - 1; i >= 0; i--) {
+                        ghostPoints[i].life--;
+                        if (ghostPoints[i].life <= 0) {
+                            ghostPoints.splice(i, 1);
+                            geometryDirty = true;
+                        }
+                    }
+
+                    // Clean up legacy pelletPoints (shouldn't have any new ones)
                     for (let i = pelletPoints.length - 1; i >= 0; i--) {
                         pelletPoints[i].life--;
-                        // Remove if faded OR if pellet was collected
                         if (pelletPoints[i].life <= 0 ||
                             gameDataRef.current.collectedPellets.has(pelletPoints[i].pelletId)) {
                             pelletPoints.splice(i, 1);
@@ -676,7 +699,7 @@
 
                     if (!geometryDirty) return;
 
-                    const allPoints = [...wallPoints, ...pelletPoints];
+                    const allPoints = [...wallPoints, ...pelletPoints, ...ghostPoints];
                     if (allPoints.length === 0) return;
 
                     const pos = new Float32Array(allPoints.length * 3);
@@ -991,6 +1014,30 @@
                         ctx.beginPath();
                         ctx.arc(px, py, 2.5, 0, Math.PI * 2);
                         ctx.fill();
+
+                        // Proximity indicator - pulsing ring based on closest ghost
+                        if (scannedGhosts.length > 0) {
+                            let minDist = Infinity;
+                            scannedGhosts.filter(g => now - g.timestamp < GHOST_FADE_TIME).forEach(ghost => {
+                                const dx = playerPos.x - ghost.x;
+                                const dz = playerPos.z - ghost.z;
+                                const dist = Math.sqrt(dx * dx + dz * dz);
+                                if (dist < minDist) minDist = dist;
+                            });
+
+                            if (minDist < 10) { // Within proximity range
+                                const intensity = 1 - (minDist / 10); // 0 to 1 (closer = higher)
+                                const pulseSpeed = 0.01 + intensity * 0.02; // Faster pulse when closer
+                                const pulse = 0.3 + Math.sin(Date.now() * pulseSpeed) * 0.3;
+                                const ringRadius = 6 + (1 - intensity) * 8; // Smaller ring = closer ghost
+
+                                ctx.strokeStyle = `rgba(255, 50, 50, ${pulse * intensity})`;
+                                ctx.lineWidth = 1.5 + intensity;
+                                ctx.beginPath();
+                                ctx.arc(px, py, ringRadius, 0, Math.PI * 2);
+                                ctx.stroke();
+                            }
+                        }
 
                         // View direction
                         ctx.strokeStyle = 'rgba(255,255,255,0.5)';
