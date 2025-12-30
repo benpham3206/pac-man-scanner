@@ -903,6 +903,7 @@
 
             // Go back to menu (full reset)
             const goToMenu = () => {
+                if (document.pointerLockElement) document.exitPointerLock();
                 setGameState('menu');
                 setScore(0);
                 setLives(3);
@@ -918,6 +919,10 @@
 
             // Restart level (stay in game, reset state)
             const restartLevel = () => {
+                if (document.pointerLockElement) document.exitPointerLock();
+                // Set to menu first to ensure a complete unmount of the game component
+                setGameState('restarting');
+
                 setScore(0);
                 setLives(3);
                 setPelletsCollected(0);
@@ -928,10 +933,8 @@
                     scannedCells: new Set(), scannedGhosts: [],
                     collectedPellets: new Set(), activeScanHits: [], isScanning: false
                 };
-                // Ensure escape from pointers
-                if (document.pointerLockElement) document.exitPointerLock();
-                // Force re-render by toggling game state
-                setGameState('menu');
+
+                // Short delay to allow React to unmount the previous THREE.js instance
                 setTimeout(() => setGameState('playing'), 50);
             };
 
@@ -1311,6 +1314,10 @@
                         </div>
                     </div>
                 );
+            }
+
+            if (gameState === 'restarting') {
+                return <div style={{ width: '100vw', height: '100vh', background: '#000' }} />;
             }
 
             return (
