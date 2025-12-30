@@ -432,7 +432,7 @@
                         new THREE.SphereGeometry(0.7, 8, 8),
                         new THREE.MeshBasicMaterial({ visible: false })
                     );
-                    ghost.position.set(pos.x, 0.7, pos.z);
+                    ghost.position.set(pos.x, 1.2, pos.z);
                     ghost.userData = {
                         type: 'ghost',
                         index: i,
@@ -546,7 +546,7 @@
                         }
                     } else if (state.scanMode === 'beam') {
                         // Simplified flashlight beam - fewer points for performance
-                        const maxAngle = 0.1;
+                        const maxAngle = 0.25; // Wide to match ghost size
                         const pointCount = 25; // Reduced from ~100 to 25
 
                         // Center point
@@ -829,7 +829,7 @@
                         } else {
                             gd.dir = Math.random() * Math.PI * 2;
                         }
-                        ghost.position.y = 0.7 + Math.sin(time * 2.5 + i) * 0.08;
+                        ghost.position.y = 1.2 + Math.sin(time * 2.5 + i) * 0.08;
 
                         const dist = Math.hypot(camera.position.x - ghost.position.x, camera.position.z - ghost.position.z);
 
@@ -838,7 +838,7 @@
 
                         if (dist < 0.85) {
                             if (gd.scared) {
-                                ghost.position.set(ghostSpawns[i].x, 0.7, ghostSpawns[i].z);
+                                ghost.position.set(ghostSpawns[i].x, 1.2, ghostSpawns[i].z);
                                 gd.scared = false;
                                 state.score += 200;
                                 setScore(state.score);
@@ -855,7 +855,7 @@
                                 camera.position.set(0, 1.6, 18);
                                 state.yaw = state.pitch = 0;
                                 ghosts.forEach((g, j) => {
-                                    g.position.set(ghostSpawns[j].x, 0.7, ghostSpawns[j].z);
+                                    g.position.set(ghostSpawns[j].x, 1.2, ghostSpawns[j].z);
                                     g.userData.scared = false;
                                 });
                             }
