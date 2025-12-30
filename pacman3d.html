@@ -623,15 +623,15 @@
                             const pz = hit.point.z + (Math.random() - 0.5) * noise;
 
                             if (data.type === 'ghost') {
-                                // Brighter ghost colors - scared = blue, normal = boosted original
+                                // Ghost colors - scared = blue, normal = original bold color
                                 let r, g, b;
                                 if (data.scared) {
                                     r = 0.3; g = 0.5; b = 1.0; // Bright blue when scared
                                 } else {
                                     const c = data.color;
-                                    r = Math.min(1, ((c >> 16) & 255) / 255 * 1.5);
-                                    g = Math.min(1, ((c >> 8) & 255) / 255 * 1.5);
-                                    b = Math.min(1, (c & 255) / 255 * 1.5);
+                                    r = ((c >> 16) & 255) / 255;
+                                    g = ((c >> 8) & 255) / 255;
+                                    b = (c & 255) / 255;
                                 }
                                 // Add multiple points for denser, more visible ghost outline
                                 for (let p = 0; p < 3; p++) {
