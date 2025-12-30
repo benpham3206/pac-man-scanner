@@ -336,65 +336,30 @@
                     pitch: 0,
                     scanning: false,
                     scanMode: 'default',
-                    activeSpirals: [0], // Array of active spiral time offsets
-                    activeBeams: [0], // Array of active sonar beam time offsets
+                    spiralT: 0,
                     lineHorizontal: true, // Toggle for line scan orientation
-                    sweepT: 0, // 0 to 1 for sweeping lines
-                    sweepDir: 1,
                     score: 0,
                     lives: 3,
                     pelletsCollected: 0
                 };
 
-                // OPTIMIZATION: Ring Buffer for permanent points (Walls/Pellets)
-                // Eliminates garbage collection and array resizing
-                const MAX_POINTS = 500000;
-                const pointPositions = new Float32Array(MAX_POINTS * 3);
-                const pointColors = new Float32Array(MAX_POINTS * 3);
-                let pointHead = 0; // Current write index
-                let pointCount = 0; // Total points (up to MAX)
-
+                // Point cloud - permanent wall/pellet points, fading ghost points
+                const wallPoints = []; // Permanent (walls + pellets)
+                const ghostPoints = []; // Fade after 5s
                 const pointGeometry = new THREE.BufferGeometry();
-                pointGeometry.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3));
-                pointGeometry.setAttribute('color', new THREE.BufferAttribute(pointColors, 3));
-                // Initial draw range 0
-                pointGeometry.setDrawRange(0, 0);
-
                 const pointMaterial = new THREE.PointsMaterial({
-                    size: 3, // Reverted to original larger size
+                    size: 3,
                     vertexColors: true,
                     sizeAttenuation: false
                 });
                 const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
-                pointCloud.frustumCulled = false;
+                pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
                 scene.add(pointCloud);
 
-                // Ghost points remain separate as they need to fade/remove individually
-                const ghostPoints = [];
-                let ghostGeometryDirty = false;
-                const ghostPointGeometry = new THREE.BufferGeometry();
-                const ghostPointCloud = new THREE.Points(ghostPointGeometry, pointMaterial);
-                scene.add(ghostPointCloud);
+                const GHOST_FADE_TIME = 300; // 5 seconds (in frames at 60fps)
+                const PELLET_FADE_TIME = 180; // 3 seconds for collected pellets to fade
+                let geometryDirty = false;
 
-                const addWallPoint = (x, y, z, r, g, b) => {
-                    const idx = pointHead * 3;
-                    pointPositions[idx] = x;
-                    pointPositions[idx + 1] = y;
-                    pointPositions[idx + 2] = z;
-                    pointColors[idx] = r;
-                    pointColors[idx + 1] = g;
-                    pointColors[idx + 2] = b;
-
-                    pointHead = (pointHead + 1) % MAX_POINTS;
-                    if (pointCount < MAX_POINTS) pointCount++;
-
-                    // Optimization: Flag update range? 
-                    // For simplicity, we assume we update the buffer range in render loop
-                    // But strictly we should set needsUpdate.
-                };
-
-                const GHOST_FADE_TIME = 300;
-                const PELLET_FADE_TIME = 180;
                 const colliders = [];
                 const pelletMeshes = [];
                 let pelletCount = 0;
@@ -417,7 +382,7 @@
                         } else if (maze[row][col] === 2 || maze[row][col] === 3) {
                             const isPower = maze[row][col] === 3;
                             const pellet = new THREE.Mesh(
-                                new THREE.SphereGeometry(isPower ? 0.4 : 0.25, 12, 12), // Reverted to original compact size
+                                new THREE.SphereGeometry(isPower ? 0.4 : 0.25, 12, 12),
                                 new THREE.MeshBasicMaterial({ visible: false })
                             );
                             pellet.position.set(x, 1.2, z);
@@ -464,10 +429,10 @@
 
                 ghostSpawns.forEach((pos, i) => {
                     const ghost = new THREE.Mesh(
-                        new THREE.CapsuleGeometry(0.5, 0.6, 4, 8), // Cylinder-ish ghost shape
+                        new THREE.SphereGeometry(0.7, 8, 8),
                         new THREE.MeshBasicMaterial({ visible: false })
                     );
-                    ghost.position.set(pos.x, 1.2, pos.z);
+                    ghost.position.set(pos.x, 0.7, pos.z);
                     ghost.userData = {
                         type: 'ghost',
                         index: i,
@@ -489,9 +454,8 @@
                 const onKeyDown = e => {
                     state.keys[e.key.toLowerCase()] = true;
                     if (e.key === 'q') { state.scanMode = 'default'; setScanMode('default'); }
-                    if (e.key === 'q') { state.scanMode = 'default'; setScanMode('default'); }
-                    if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); state.activeBeams = [0]; } // Initial pulse on switch
-                    if (e.key === 'r') { state.scanMode = 'spiral'; setScanMode('spiral'); state.activeSpirals = [0]; }
+                    if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); }
+                    if (e.key === 'r') { state.scanMode = 'spiral'; setScanMode('spiral'); state.spiralT = 0; }
                     if (e.key === 't') {
                         // Always cycle orientation
                         state.lineHorizontal = !state.lineHorizontal;
@@ -519,10 +483,6 @@
                 const onMouseDown = e => {
                     if (e.button === 0 && document.pointerLockElement === renderer.domElement) {
                         state.scanning = true;
-                        if (state.scanMode === 'beam') {
-                            // Manual trigger: Start a new pulse on click
-                            state.activeBeams.push(0);
-                        }
                     }
                 };
                 const onMouseUp = e => { if (e.button === 0) state.scanning = false; };
@@ -577,151 +537,69 @@
                     // Subtle scan sound with reverb
                     if (Math.random() < 0.15) playScanSound();
 
-                    // Helper: Create ray direction relative to camera orientation
-                    const getDir = (hAngle, vAngle) => {
-                        const v = new THREE.Vector3(0, 0, -1);
-                        v.applyAxisAngle(new THREE.Vector3(1, 0, 0), vAngle);
-                        v.applyAxisAngle(new THREE.Vector3(0, 1, 0), hAngle);
-                        v.applyQuaternion(camera.quaternion);
-                        return v;
-                    };
-
-                    // Helper: Calculate max radius to cover wall height at distance
-                    const getAdaptiveRadius = (dist) => {
-                        // Wall height is 3. We want to see the full height.
-                        // theta = atan((height/2) / dist) * 2? Or just height/dist approximation?
-                        // Simple atan(height/dist) gives a good coverage angle.
-                        // Ensure it doesn't get excessively large or small.
-                        const angle = Math.atan(3.0 / dist);
-                        return Math.max(0.15, Math.min(1.2, angle));
-                    };
-
                     if (state.scanMode === 'default') {
-                        // 360 Scan: Random Spherical Distribution
                         for (let i = 0; i < 45; i++) {
-                            // Uniform sphere point
-                            const theta = Math.random() * Math.PI * 2;
-                            const phi = Math.acos(2 * Math.random() - 1);
-
-                            // Convert to Cartesian
-                            const x = Math.sin(phi) * Math.cos(theta);
-                            const y = Math.sin(phi) * Math.sin(theta);
-                            const z = Math.cos(phi);
-
-                            // Note: getDir applies rotation, but for 360 we just need world space random?
-                            // Actually, let's keep it relative to camera just in case we change it later, 
-                            // but 360 is rotation invariant. getDir adds camera rotation.
-                            // If we want world-space 360, we don't need getDir/camera quaternion.
-                            // But usually players expect scans to emanate from them. 
-                            dirs.push(new THREE.Vector3(x, y, z));
+                            dirs.push({
+                                h: state.yaw + (Math.random() - 0.5) * Math.PI / 2.5,
+                                v: state.pitch + (Math.random() - 0.5) * Math.PI / 3.5
+                            });
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Sonar Pulse: Loops when finished reaching radius
-                        const centerRay = new THREE.Raycaster();
-                        const centerDir = new THREE.Vector3();
-                        camera.getWorldDirection(centerDir);
-                        centerRay.set(camera.position, centerDir);
-                        const centerHits = centerRay.intersectObjects(colliders, false);
-                        const centerDist = centerHits.length > 0 ? centerHits[0].distance : 20;
+                        // Simplified flashlight beam - fewer points for performance
+                        const maxAngle = 0.1;
+                        const pointCount = 25; // Reduced from ~100 to 25
 
-                        const maxR = getAdaptiveRadius(centerDist);
-                        const bSpeed = 0.008;
-                        const pointsPerFrame = 60;
-                        const maxT = maxR / bSpeed;
-                        // Loop condition: Spawn new when previous finishes (reached max radius)
-                        const spawnThreshold = maxT * 0.95;
+                        // Center point
+                        dirs.push({ h: state.yaw, v: state.pitch });
 
-                        if (state.activeBeams.length === 0 ||
-                            (state.activeBeams[state.activeBeams.length - 1] > spawnThreshold &&
-                                state.activeBeams[state.activeBeams.length - 1] < spawnThreshold + 1)) {
-                            state.activeBeams.push(0);
-                        }
-
-                        for (let s = state.activeBeams.length - 1; s >= 0; s--) {
-                            let t = state.activeBeams[s];
-                            const r = t * bSpeed;
-
-                            for (let i = 0; i < pointsPerFrame; i++) {
-                                const theta = (i / pointsPerFrame) * Math.PI * 2;
-                                const localX = Math.cos(theta) * r;
-                                const localY = Math.sin(theta) * r;
-                                const v = new THREE.Vector3(localX, localY, -1).normalize();
-                                v.applyQuaternion(camera.quaternion);
-                                dirs.push(v);
-                            }
-                            state.activeBeams[s] += 0.5;
-
-                            if (state.activeBeams[s] > maxT) {
-                                state.activeBeams.splice(s, 1);
-                            }
+                        // Random scatter in cone
+                        for (let i = 0; i < pointCount; i++) {
+                            const r = Math.sqrt(Math.random()) * maxAngle;
+                            const theta = Math.random() * Math.PI * 2;
+                            dirs.push({
+                                h: state.yaw + Math.cos(theta) * r,
+                                v: state.pitch + Math.sin(theta) * r
+                            });
                         }
                     } else if (state.scanMode === 'line') {
-                        // Sweeping Line Scan
-                        // Update Sweep State
-                        const sweepSpeed = 0.01;
-                        state.sweepT += state.sweepDir * sweepSpeed;
-                        if (state.sweepT > 1 || state.sweepT < 0) state.sweepDir *= -1;
-
-                        // Map T to Angle Range (-0.6 to 0.6 rads approx 35deg each way)
-                        const sweepAngle = (state.sweepT - 0.5) * 1.2;
-
-                        for (let i = 0; i < 100; i++) {
-                            const offset = (i / 100 - 0.5) * Math.PI; // Full 180 degrees
-
+                        // Line scan - toggle between horizontal and vertical with T
+                        // Line scan - toggle between horizontal and vertical with T
+                        for (let i = 0; i < 150; i++) {
+                            const offset = (i / 150 - 0.5) * Math.PI; // Full 180 degrees
                             if (state.lineHorizontal) {
-                                // Horizontal Line (Horizon) sweeping Vertically (Pitch)
-                                dirs.push(getDir(offset, sweepAngle));
+                                dirs.push({ h: state.yaw + offset, v: state.pitch });
                             } else {
-                                // Vertical Line (Meridian) sweeping Horizontally (Yaw)
-                                dirs.push(getDir(sweepAngle, offset));
+                                dirs.push({ h: state.yaw, v: state.pitch + offset });
                             }
                         }
                     } else if (state.scanMode === 'spiral') {
-                        // Adaptive Spiral: Loops at 50%
-                        const centerRay = new THREE.Raycaster();
-                        const centerDir = new THREE.Vector3();
-                        camera.getWorldDirection(centerDir);
-                        centerRay.set(camera.position, centerDir);
-                        const centerHits = centerRay.intersectObjects(colliders, false);
-                        const centerDist = centerHits.length > 0 ? centerHits[0].distance : 20;
-
-                        const maxR = getAdaptiveRadius(centerDist);
-
-                        const a = 0.001;
-                        const b = 0.015;
+                        // Archimedes spiral: r = a + b*theta, starting from center going outward
+                        // Single continuous line emanating from crosshair center
+                        const a = 0.001; // Start very close to center
+                        const b = 0.015; // How fast it expands
                         const pointsPerFrame = 25;
-                        const maxT = maxR / b;
-                        const spawnThreshold = maxT * 0.5; // Loop at 50%
 
-                        if (state.activeSpirals.length === 0 ||
-                            (state.activeSpirals[state.activeSpirals.length - 1] > spawnThreshold &&
-                                state.activeSpirals[state.activeSpirals.length - 1] < spawnThreshold + 1)) {
-                            state.activeSpirals.push(0);
-                        }
-
-                        for (let s = state.activeSpirals.length - 1; s >= 0; s--) {
-                            let t = state.activeSpirals[s];
-
-                            for (let i = 0; i < pointsPerFrame; i++) {
-                                const theta = t + i * 0.15;
-                                const r = a + b * theta;
-                                if (r < maxR) {
-                                    const localX = Math.cos(theta) * r;
-                                    const localY = Math.sin(theta) * r;
-                                    const v = new THREE.Vector3(localX, localY, -1).normalize();
-                                    v.applyQuaternion(camera.quaternion);
-                                    dirs.push(v);
-                                }
-                            }
-                            state.activeSpirals[s] += 0.25;
-
-                            if (state.activeSpirals[s] > maxT) {
-                                state.activeSpirals.splice(s, 1);
+                        for (let i = 0; i < pointsPerFrame; i++) {
+                            const theta = state.spiralT + i * 0.15;
+                            const r = a + b * theta;
+                            // Clamp radius to reasonable viewing angle
+                            if (r < 0.6) {
+                                dirs.push({
+                                    h: state.yaw + Math.cos(theta) * r,
+                                    v: state.pitch + Math.sin(theta) * r
+                                });
                             }
                         }
+                        state.spiralT += 0.25; // Advance spiral
+                        // Reset spiral when it gets too big
+                        if (state.spiralT > 40) state.spiralT = 0;
                     }
 
-                    for (const dir of dirs) {
+                    for (const d of dirs) {
+                        const dir = new THREE.Vector3(0, 0, -1);
+                        dir.applyAxisAngle(new THREE.Vector3(1, 0, 0), d.v);
+                        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), d.h);
+
                         raycaster.set(camera.position, dir.normalize());
                         const hits = raycaster.intersectObjects(colliders, false);
 
@@ -746,37 +624,15 @@
                             const pz = hit.point.z + (Math.random() - 0.5) * noise;
 
                             if (data.type === 'ghost') {
-                                // Ghost colors - scared = blue, normal = original bold color
+                                // Brighter ghost colors - scared = blue, normal = boosted original
                                 let r, g, b;
                                 if (data.scared) {
-                                    r = 0.1; g = 0.1; b = 0.9; // Deep Blue when scared
+                                    r = 0.3; g = 0.5; b = 1.0; // Bright blue when scared
                                 } else {
                                     const c = data.color;
-                                    let r0 = ((c >> 16) & 255) / 255;
-                                    let g0 = ((c >> 8) & 255) / 255;
-                                    let b0 = (c & 255) / 255;
-
-                                    // Saturation boost
-                                    const max = Math.max(r0, g0, b0);
-                                    const min = Math.min(r0, g0, b0);
-                                    const l = (max + min) / 2;
-                                    if (max !== min) {
-                                        const d = max - min;
-                                        const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                                        const newS = Math.min(1, s * 1.5); // 50% saturation boost
-
-                                        // Simple vibrance boost - push channels apart
-                                        r = r0 + (r0 - l) * 0.5;
-                                        g = g0 + (g0 - l) * 0.5;
-                                        b = b0 + (b0 - l) * 0.5;
-
-                                        // Clamp
-                                        r = Math.min(1, Math.max(0, r));
-                                        g = Math.min(1, Math.max(0, g));
-                                        b = Math.min(1, Math.max(0, b));
-                                    } else {
-                                        r = r0; g = g0; b = b0;
-                                    }
+                                    r = Math.min(1, ((c >> 16) & 255) / 255 * 1.5);
+                                    g = Math.min(1, ((c >> 8) & 255) / 255 * 1.5);
+                                    b = Math.min(1, (c & 255) / 255 * 1.5);
                                 }
                                 // Add multiple points for denser, more visible ghost outline
                                 for (let p = 0; p < 3; p++) {
@@ -789,7 +645,6 @@
                                         life: GHOST_FADE_TIME
                                     });
                                 }
-                                ghostGeometryDirty = true;
                                 // Update ghost position for minimap
                                 const existing = gameDataRef.current.scannedGhosts.find(g => g.index === data.index);
                                 if (existing) {
@@ -803,76 +658,65 @@
                                         color: data.color, scared: data.scared, timestamp: Date.now()
                                     });
                                 }
+                            } else if (data.type === 'pellet' && !data.collected) {
+                                // Pellets: yellow normal, red power
+                                wallPoints.push({
+                                    x: px, y: py, z: pz,
+                                    r: 1, g: data.isPower ? 0.2 : 1, b: data.isPower ? 0.2 : 0.1,
+                                    pelletId: data.id // Track for removal when collected
+                                });
                             } else {
-                                // Wall/Pellet => Ring Buffer
-                                const isPellet = data.type === 'pellet';
-                                const isPower = data.isPower;
-                                if (dist < 34) {
-                                    if (isPellet && !data.collected) {
-                                        // High density for pellets
-                                        for (let i = 0; i < 5; i++) {
-                                            const spread = 0.05;
-                                            addWallPoint(
-                                                hits[0].point.x + (Math.random() - 0.5) * spread,
-                                                hits[0].point.y + (Math.random() - 0.5) * spread,
-                                                hits[0].point.z + (Math.random() - 0.5) * spread,
-                                                1, isPower ? 0.2 : 1, isPower ? 0.2 : 0.1
-                                            );
-                                        }
-                                    } else if (['wall', 'ground', 'ceiling'].includes(data.type) || (isPellet && data.collected)) {
-                                        // Wall or collected pellet (still visible as wall)
-                                        const col = distColor(dist);
-                                        addWallPoint(hits[0].point.x, hits[0].point.y, hits[0].point.z, col.r, col.g, col.b);
-                                    }
-                                }
+                                // Walls = white gradient
+                                const col = distColor(dist);
+                                wallPoints.push({ x: px, y: py, z: pz, r: col.r, g: col.g, b: col.b });
                             }
                         }
                     }
 
                     gameDataRef.current.activeScanHits = scanHits;
                     gameDataRef.current.isScanning = true;
+                    geometryDirty = true;
                 };
 
                 // Update points
                 const updatePoints = () => {
-                    // 1. Permanent Wall Points (Ring Buffer)
-                    // We update the draw range to show all valid points
-                    pointGeometry.setDrawRange(0, pointCount);
-                    pointGeometry.attributes.position.needsUpdate = true;
-                    pointGeometry.attributes.color.needsUpdate = true;
-
-                    // 2. Ghost Points (Dynamic Fade)
-                    // Filter dead points
+                    // Fade ghost points (5 seconds)
                     for (let i = ghostPoints.length - 1; i >= 0; i--) {
                         ghostPoints[i].life--;
                         if (ghostPoints[i].life <= 0) {
                             ghostPoints.splice(i, 1);
-                            ghostGeometryDirty = true;
+                            geometryDirty = true;
                         }
                     }
 
-                    // Rebuild ghost geometry if needed (or every frame if adding points)
-                    // Since this array is small (<5000 usually), full rebuild is acceptable
-                    if (ghostGeometryDirty || ghostPoints.length > 0) {
-                        const gp = new Float32Array(ghostPoints.length * 3);
-                        const gc = new Float32Array(ghostPoints.length * 3);
-                        ghostPoints.forEach((p, i) => {
-                            gp[i * 3] = p.x; gp[i * 3 + 1] = p.y; gp[i * 3 + 2] = p.z;
-                            // Fade logic
-                            const alpha = Math.min(1, p.life / 60);
-                            gc[i * 3] = p.r * alpha; gc[i * 3 + 1] = p.g * alpha; gc[i * 3 + 2] = p.b * alpha;
-                        });
-                        ghostPointGeometry.setAttribute('position', new THREE.BufferAttribute(gp, 3));
-                        ghostPointGeometry.setAttribute('color', new THREE.BufferAttribute(gc, 3));
-                        ghostPointGeometry.attributes.position.needsUpdate = true;
-                        ghostPointGeometry.attributes.color.needsUpdate = true;
-                        ghostPointGeometry.setDrawRange(0, ghostPoints.length);
-                        ghostGeometryDirty = false;
-                    } else {
-                        ghostPointGeometry.setDrawRange(0, 0);
+                    // Remove collected pellet points from wallPoints
+                    for (let i = wallPoints.length - 1; i >= 0; i--) {
+                        if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
+                            wallPoints.splice(i, 1);
+                            geometryDirty = true;
+                        }
                     }
 
-                    setPointCount(pointCount + ghostPoints.length);
+                    if (!geometryDirty) return;
+
+                    const allPoints = [...wallPoints, ...ghostPoints];
+                    if (allPoints.length === 0) return;
+
+                    const pos = new Float32Array(allPoints.length * 3);
+                    const col = new Float32Array(allPoints.length * 3);
+
+                    allPoints.forEach((p, i) => {
+                        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+                        const alpha = p.life !== undefined ? Math.min(1, p.life / 150) : 1;
+                        col[i * 3] = p.r * alpha;
+                        col[i * 3 + 1] = p.g * alpha;
+                        col[i * 3 + 2] = p.b * alpha;
+                    });
+
+                    pointGeometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                    pointGeometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+                    geometryDirty = false;
+                    setPointCount(allPoints.length);
                 };
 
                 let time = 0;
@@ -986,7 +830,7 @@
                         } else {
                             gd.dir = Math.random() * Math.PI * 2;
                         }
-                        ghost.position.y = 1.2 + Math.sin(time * 2.5 + i) * 0.08;
+                        ghost.position.y = 0.7 + Math.sin(time * 2.5 + i) * 0.08;
 
                         const dist = Math.hypot(camera.position.x - ghost.position.x, camera.position.z - ghost.position.z);
 
@@ -995,7 +839,7 @@
 
                         if (dist < 0.85) {
                             if (gd.scared) {
-                                ghost.position.set(ghostSpawns[i].x, 1.2, ghostSpawns[i].z);
+                                ghost.position.set(ghostSpawns[i].x, 0.7, ghostSpawns[i].z);
                                 gd.scared = false;
                                 state.score += 200;
                                 setScore(state.score);
@@ -1012,7 +856,7 @@
                                 camera.position.set(0, 1.6, 18);
                                 state.yaw = state.pitch = 0;
                                 ghosts.forEach((g, j) => {
-                                    g.position.set(ghostSpawns[j].x, 1.2, ghostSpawns[j].z);
+                                    g.position.set(ghostSpawns[j].x, 0.7, ghostSpawns[j].z);
                                     g.userData.scared = false;
                                 });
                             }

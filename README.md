@@ -13,21 +13,18 @@ A Scanner Sombre-inspired reimagining of the classic PAC-MAN arcade game. Naviga
 - **Power Pellets**: Large pellets that let you eat ghosts temporarily
 
 ### Scan Modes
-- **LIDAR Scanning Mechanics**:
-    - **Default (Q)**: 360° Spherical Scan. Scatters points in all directions.
-    - **Beam (E)**: Sonar Pulse. Adaptive expanding rings that loop automatically.
-    - **Spiral (R)**: Adaptive Tunnel. Spawns overlapping segments for a continuous tunnel effect.
-    - **Line (T)**: Sweeping Scanner.
-        - **Horizontal**: Sweeps vertically (Pitch).
-        - **Vertical**: Sweeps horizontally (Yaw).
-- **Adaptive Precision**: Beam and Spiral scans automatically adjust their size (radius) to perfectly cover the 3m wall height based on your distance.
-- **Ring Buffer Optimization**: Efficiently handles 500,000+ points with zero performance drop.
+| Key | Mode | Description |
+|-----|------|-------------|
+| **Q** | Default | Random Scatter (Center-biased) |
+| **E** | Beam | Flashlight Cone |
+| **R** | Spiral | Archimedes Spiral |
+| **T** | Line | Horizontal 180° / Vertical Toggle |
 
 ### Visual Features
-- **Visuals**:
-    - **Ghosts**: Scared ghosts turn Deep Blue.
-    - **Pellets**: High-density scanning (5x points) makes them pop instantly.
-- **Distance-based Colors**: Points closer to you appear brighter
+- **LIDAR point cloud visualization**
+- **Distance-based coloring**
+- **Vibrant Ghost Colors**
+- **Minimap** (Tab)
 - **Ghost Point Fade**: Scanned ghost particles fade after 5 seconds
 - **Permanent Pellets**: Scanned pellet locations stay visible
 - **Minimap**: Real-time top-down view of scanned areas
