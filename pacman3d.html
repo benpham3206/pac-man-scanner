@@ -616,20 +616,27 @@
                             const ray = new THREE.Raycaster(camera.position, vecToTarget.clone().normalize(), 0, dist + 0.5);
                             const intersections = ray.intersectObjects(colliders, false);
                             if (intersections.length > 0 && intersections[0].object === target) {
-                                // Visible! 75% chance to add a point
+                                // Visible! 75% chance to add points
                                 if (Math.random() < 0.75) {
-                                    // Pick random point on surface approximation
-                                    const p = target.position.clone().add(new THREE.Vector3(
-                                        (Math.random() - 0.5) * 0.5,
-                                        (Math.random() - 0.5) * 1.0,
-                                        (Math.random() - 0.5) * 0.5
-                                    ));
-                                    // Create synthetic hit
-                                    scanHits.push({
-                                        point: p,
-                                        object: target,
-                                        distance: dist
-                                    });
+                                    // Generate MULTIPLE points per frame for high density
+                                    const geom = target.geometry;
+                                    const radius = (geom.parameters.radius || 0.5);
+                                    const height = (geom.parameters.length || (radius * 2));
+
+                                    for (let i = 0; i < 10; i++) {
+                                        // Pick random point on surface approximation
+                                        const p = target.position.clone().add(new THREE.Vector3(
+                                            (Math.random() - 0.5) * radius * 2.2,
+                                            (Math.random() - 0.5) * height * 1.2, // Slight over-volume
+                                            (Math.random() - 0.5) * radius * 2.2
+                                        ));
+                                        // Create synthetic hit
+                                        scanHits.push({
+                                            point: p,
+                                            object: target,
+                                            distance: dist
+                                        });
+                                    }
                                 }
                             }
                         }
