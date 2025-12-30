@@ -212,7 +212,7 @@
                 [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
             ];
 
-            const cellSize = 2;
+            const cellSize = 2.3; // Increased by 15%
 
             useEffect(() => {
                 if (!containerRef.current || gameState === 'menu') return;
@@ -551,6 +551,7 @@
                             });
                         }
                     } else if (state.scanMode === 'beam') {
+                    } else if (state.scanMode === 'beam') {
                         // Sonar Pulse: Expanding closed circles (rings)
                         // Similar to spiral, but emits full circles at current radius
                         const speed = 0.015; // Speed of expansion
@@ -559,7 +560,7 @@
 
                         // Spawn new pulse if needed
                         if (state.activeBeams.length === 0 ||
-                            state.activeBeams[state.activeBeams.length - 1] > maxRadius * 0.6) {
+                            state.activeBeams[state.activeBeams.length - 1] > 0.08) {
                             state.activeBeams.push(0);
                         }
 
@@ -567,16 +568,19 @@
                         for (let s = state.activeBeams.length - 1; s >= 0; s--) {
                             const r = state.activeBeams[s];
 
-                            // Generate full circle at radius r
-                            for (let i = 0; i < pointsPerRing; i++) {
-                                const theta = (i / pointsPerRing) * Math.PI * 2;
+                            // Generate points for ring - use radius for circumference
+                            const ringCircumference = 2 * Math.PI * r;
+                            const pointsInRing = Math.floor(ringCircumference * 12); // proportional density
+
+                            for (let i = 0; i < pointsInRing; i++) {
+                                const theta = (i / pointsInRing) * Math.PI * 2;
                                 dirs.push({
                                     h: state.yaw + Math.cos(theta) * r,
                                     v: state.pitch + Math.sin(theta) * r
                                 });
                             }
 
-                            state.activeBeams[s] += speed;
+                            state.activeBeams[s] += 0.005; // Slower expansion
 
                             // Remove finished pulses
                             if (state.activeBeams[s] > maxRadius) {
@@ -585,8 +589,8 @@
                         }
                     } else if (state.scanMode === 'line') {
                         // Line scan - toggle between horizontal and vertical with T
-                        for (let i = 0; i < 100; i++) {
-                            const offset = (i / 100 - 0.5) * Math.PI * 0.9; // Nearly full 180 degree FOV
+                        for (let i = 0; i < 40; i++) {
+                            const offset = (i / 40 - 0.5) * Math.PI; // Full 180 degrees
                             if (state.lineHorizontal) {
                                 dirs.push({ h: state.yaw + offset, v: state.pitch });
                             } else {
@@ -738,15 +742,25 @@
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
                                 // Pellets: yellow normal, red power
-                                // Generate multiple points for dense visibility
-                                for (let i = 0; i < 5; i++) {
-                                    // Scatter points across the entire pellet volume
-                                    // Use pellet radius (0.25) as baseline spread
-                                    const spread = i === 0 ? 0 : 0.25;
+                                // Generate multiple points for dense visibility with VOLUMETRIC scatter
+                                const pr = data.isPower ? 0.4 : 0.25;
+                                for (let i = 0; i < 6; i++) {
+                                    // Random point within sphere volume
+                                    const u = Math.random();
+                                    const v = Math.random();
+                                    const theta = 2 * Math.PI * u;
+                                    const phi = Math.acos(2 * v - 1);
+                                    const r = Math.cbrt(Math.random()) * pr * 0.9; // 0.9 to stay slightly inside
+
+                                    const sinPhi = Math.sin(phi);
+                                    const dx = r * sinPhi * Math.cos(theta);
+                                    const dy = r * sinPhi * Math.sin(theta);
+                                    const dz = r * Math.cos(phi);
+
                                     wallPoints.push({
-                                        x: px + (Math.random() - 0.5) * spread,
-                                        y: py + (Math.random() - 0.5) * spread,
-                                        z: pz + (Math.random() - 0.5) * spread,
+                                        x: hit.object.position.x + dx,
+                                        y: hit.object.position.y + dy,
+                                        z: hit.object.position.z + dz,
                                         r: 1, g: data.isPower ? 0.2 : 1, b: data.isPower ? 0.2 : 0.1,
                                         pelletId: data.id
                                     });
@@ -897,24 +911,49 @@
                             if (gd.scaredTimer <= 0) gd.scared = false;
                         }
 
-                        const toPlayer = new THREE.Vector3(camera.position.x - ghost.position.x, 0, camera.position.z - ghost.position.z);
-                        if (Math.random() < 0.02) {
-                            gd.dir = gd.scared
-                                ? Math.atan2(-toPlayer.z, -toPlayer.x) + (Math.random() - 0.5)
-                                : (Math.random() < 0.5
-                                    ? Math.atan2(toPlayer.z, toPlayer.x) + (Math.random() - 0.5) * 0.4
-                                    : Math.random() * Math.PI * 2);
-                        }
+                        // Ghost AI: Goldilocks Zone (Chase if 3 < dist < 10)
+                        const dx = camera.position.x - ghost.position.x;
+                        const dz = camera.position.z - ghost.position.z;
+                        const distToPlayer = Math.sqrt(dx * dx + dz * dz);
 
-                        const spd = gd.scared ? gd.speed * 0.55 : gd.speed;
-                        const move = new THREE.Vector3(Math.cos(gd.dir), 0, Math.sin(gd.dir));
-                        const newGPos = ghost.position.clone().addScaledVector(move, spd);
+                        if (!ghost.userData.scared) {
+                            if (distToPlayer < 3) {
+                                // Too close! Stop and stare.
+                            } else if (distToPlayer < 12) { // Chase range extended slightly to 12
+                                ghost.userData.dir = Math.atan2(dx, dz);
+                                const speed = ghost.userData.speed;
+                                const nextX = ghost.position.x + Math.sin(ghost.userData.dir) * speed;
+                                const nextZ = ghost.position.z + Math.cos(ghost.userData.dir) * speed;
 
-                        if (!checkCol(newGPos, 0.45)) {
-                            ghost.position.x = newGPos.x;
-                            ghost.position.z = newGPos.z;
+                                // Wall collision check for ghost
+                                if (!checkCol({ x: nextX, z: nextZ }, 0.5)) {
+                                    ghost.position.x = nextX;
+                                    ghost.position.z = nextZ;
+                                } else {
+                                    // Slide
+                                    if (!checkCol({ x: nextX, z: ghost.position.z }, 0.5)) ghost.position.x = nextX;
+                                    if (!checkCol({ x: ghost.position.x, z: nextZ }, 0.5)) ghost.position.z = nextZ;
+                                    // Randomize dir if stuck
+                                    if (Math.random() < 0.05) ghost.userData.dir = Math.random() * Math.PI * 2;
+                                }
+                            } else {
+                                // Dormant/Patrol (optional: could wander randomly)
+                            }
                         } else {
-                            gd.dir = Math.random() * Math.PI * 2;
+                            // Scared: Run away
+                            if (distToPlayer < 10) {
+                                ghost.userData.dir = Math.atan2(dx, dz) + Math.PI; // Run opposite
+                            }
+                            // ... existing movement logic for scared/wander/etc ...
+                            const speed = ghost.userData.speed * 0.6; // Slower when scared
+                            const nextX = ghost.position.x + Math.sin(ghost.userData.dir) * speed;
+                            const nextZ = ghost.position.z + Math.cos(ghost.userData.dir) * speed;
+                            if (!checkCol({ x: nextX, z: nextZ }, 0.5)) {
+                                ghost.position.x = nextX;
+                                ghost.position.z = nextZ;
+                            } else {
+                                ghost.userData.dir = Math.random() * Math.PI * 2;
+                            }
                         }
                         ghost.position.y = 1.2 + Math.sin(time * 2.5 + i) * 0.08;
 
