@@ -544,10 +544,7 @@
                     if (Math.random() < 0.15) playScanSound();
 
                     // Helper: Create ray direction relative to camera orientation
-                    // Solves 'head on' distortion by rotating local scan vectors by absolute camera quaternion
                     const getDir = (hAngle, vAngle) => {
-                        // Convert spherical offsets to local 3D vector
-                        // Z is forward (-1), H rotates around Y, V rotates around X
                         const v = new THREE.Vector3(0, 0, -1);
                         v.applyAxisAngle(new THREE.Vector3(1, 0, 0), vAngle);
                         v.applyAxisAngle(new THREE.Vector3(0, 1, 0), hAngle);
@@ -555,17 +552,28 @@
                         return v;
                     };
 
+                    // Helper: Calculate max radius to cover wall height at distance
+                    const getAdaptiveRadius = (dist) => {
+                        // Wall height is 3. We want to see the full height.
+                        // theta = atan((height/2) / dist) * 2? Or just height/dist approximation?
+                        // Simple atan(height/dist) gives a good coverage angle.
+                        // Ensure it doesn't get excessively large or small.
+                        const angle = Math.atan(3.0 / dist);
+                        return Math.max(0.15, Math.min(1.2, angle));
+                    };
+
                     if (state.scanMode === 'default') {
+                        // Default: Cover 1.5x Maze Height area
+                        // Fixed "Wide" scatter roughly equivalent to 1.5x wall height at mid-range (6m)
+                        // At 6m, 1.5*3 = 4.5m height -> atan(4.5/6) ~= 0.64 rad (~36 deg) half-angle
+                        // We'll use a spread of ~0.7 rad for height, slightly less for width
                         for (let i = 0; i < 45; i++) {
-                            // Triangular distribution closer to center
-                            const hOff = (Math.random() - 0.5 + Math.random() - 0.5) / 2;
-                            const vOff = (Math.random() - 0.5 + Math.random() - 0.5) / 2;
-                            dirs.push(getDir(hOff * Math.PI / 2.5, vOff * Math.PI / 3.5));
+                            const hOff = (Math.random() - 0.5) * 1.2; // ~68 deg spread
+                            const vOff = (Math.random() - 0.5) * 1.4; // ~80 deg spread (Vertical emphasis)
+                            dirs.push(getDir(hOff, vOff));
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Sonar Pulse: Expanding rings
-                        // Adaptive radius based on wall distance (like spiral)
-                        // 1. Raycast center to find limit
+                        // Sonar Pulse: Loops when finished reaching radius
                         const centerRay = new THREE.Raycaster();
                         const centerDir = new THREE.Vector3();
                         camera.getWorldDirection(centerDir);
@@ -573,16 +581,18 @@
                         const centerHits = centerRay.intersectObjects(colliders, false);
                         const centerDist = centerHits.length > 0 ? centerHits[0].distance : 20;
 
-                        // Large max radius (0.15 to 1.5 rad)
-                        const maxR = Math.max(0.15, Math.min(1.5, centerDist * 0.1));
-
-                        const bSpeed = 0.005; // Very slow expansion
-                        const pointsPerFrame = 60; // Denser
+                        const maxR = getAdaptiveRadius(centerDist);
+                        const bSpeed = 0.008;
+                        const pointsPerFrame = 60;
                         const maxT = maxR / bSpeed;
-                        const spawnThreshold = maxT * 0.5; // Spawn new at 50%
+                        // Loop condition: Spawn new when previous finishes (reached max radius)
+                        const spawnThreshold = maxT * 0.95;
 
-                        // Auto-spawn removed for manual trigger behavior
-                        // New pulses are added in onMouseDown
+                        if (state.activeBeams.length === 0 ||
+                            (state.activeBeams[state.activeBeams.length - 1] > spawnThreshold &&
+                                state.activeBeams[state.activeBeams.length - 1] < spawnThreshold + 1)) {
+                            state.activeBeams.push(0);
+                        }
 
                         for (let s = state.activeBeams.length - 1; s >= 0; s--) {
                             let t = state.activeBeams[s];
@@ -590,11 +600,8 @@
 
                             for (let i = 0; i < pointsPerFrame; i++) {
                                 const theta = (i / pointsPerFrame) * Math.PI * 2;
-                                // Local circle on XY plane
                                 const localX = Math.cos(theta) * r;
                                 const localY = Math.sin(theta) * r;
-                                const localZ = -Math.cos(r); // Slight curvature adjustment optional
-
                                 const v = new THREE.Vector3(localX, localY, -1).normalize();
                                 v.applyQuaternion(camera.quaternion);
                                 dirs.push(v);
@@ -607,7 +614,7 @@
                         }
                     } else if (state.scanMode === 'line') {
                         for (let i = 0; i < 100; i++) {
-                            const offset = (i / 100 - 0.5) * Math.PI; // 180 deg
+                            const offset = (i / 100 - 0.5) * Math.PI;
                             if (state.lineHorizontal) {
                                 dirs.push(getDir(offset, 0));
                             } else {
@@ -615,7 +622,7 @@
                             }
                         }
                     } else if (state.scanMode === 'spiral') {
-                        // Adaptive Continuous Spirals
+                        // Adaptive Spiral: Loops at 50%
                         const centerRay = new THREE.Raycaster();
                         const centerDir = new THREE.Vector3();
                         camera.getWorldDirection(centerDir);
@@ -623,13 +630,13 @@
                         const centerHits = centerRay.intersectObjects(colliders, false);
                         const centerDist = centerHits.length > 0 ? centerHits[0].distance : 20;
 
-                        const maxR = Math.max(0.15, Math.min(1.5, centerDist * 0.1));
+                        const maxR = getAdaptiveRadius(centerDist);
 
                         const a = 0.001;
                         const b = 0.015;
                         const pointsPerFrame = 25;
                         const maxT = maxR / b;
-                        const spawnThreshold = maxT * 0.5;
+                        const spawnThreshold = maxT * 0.5; // Loop at 50%
 
                         if (state.activeSpirals.length === 0 ||
                             (state.activeSpirals[state.activeSpirals.length - 1] > spawnThreshold &&
@@ -644,7 +651,6 @@
                                 const theta = t + i * 0.15;
                                 const r = a + b * theta;
                                 if (r < maxR) {
-                                    // Local spiral
                                     const localX = Math.cos(theta) * r;
                                     const localY = Math.sin(theta) * r;
                                     const v = new THREE.Vector3(localX, localY, -1).normalize();
