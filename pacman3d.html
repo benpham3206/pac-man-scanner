@@ -538,24 +538,43 @@
                     // Subtle scan sound with reverb
                     if (Math.random() < 0.15) playScanSound();
 
+                    // Helper: Create ray direction relative to camera orientation
+                    // Solves 'head on' distortion by rotating local scan vectors by absolute camera quaternion
+                    const getDir = (hAngle, vAngle) => {
+                        // Convert spherical offsets to local 3D vector
+                        // Z is forward (-1), H rotates around Y, V rotates around X
+                        const v = new THREE.Vector3(0, 0, -1);
+                        v.applyAxisAngle(new THREE.Vector3(1, 0, 0), vAngle);
+                        v.applyAxisAngle(new THREE.Vector3(0, 1, 0), hAngle);
+                        v.applyQuaternion(camera.quaternion);
+                        return v;
+                    };
+
                     if (state.scanMode === 'default') {
                         for (let i = 0; i < 45; i++) {
-                            // Triangular distribution: (rand - 0.5 + rand - 0.5) / 2
-                            // Biases towards center (0), fades to edges (-0.5, 0.5)
-                            // Kept loosely box-like (separate h/v calculation)
+                            // Triangular distribution closer to center
                             const hOff = (Math.random() - 0.5 + Math.random() - 0.5) / 2;
                             const vOff = (Math.random() - 0.5 + Math.random() - 0.5) / 2;
-                            dirs.push({
-                                h: state.yaw + hOff * Math.PI / 2.5,
-                                v: state.pitch + vOff * Math.PI / 3.5
-                            });
+                            dirs.push(getDir(hOff * Math.PI / 2.5, vOff * Math.PI / 3.5));
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Sonar Pulse: Expanding rings (closed circles)
-                        const bSpeed = 0.02;
-                        const pointsPerFrame = 40;
-                        const maxT = 20;
-                        const spawnThreshold = maxT * 0.6;
+                        // Sonar Pulse: Expanding rings
+                        // Adaptive radius based on wall distance (like spiral)
+                        // 1. Raycast center to find limit
+                        const centerRay = new THREE.Raycaster();
+                        const centerDir = new THREE.Vector3();
+                        camera.getWorldDirection(centerDir);
+                        centerRay.set(camera.position, centerDir);
+                        const centerHits = centerRay.intersectObjects(colliders, false);
+                        const centerDist = centerHits.length > 0 ? centerHits[0].distance : 20;
+
+                        // Large max radius (0.15 to 1.5 rad)
+                        const maxR = Math.max(0.15, Math.min(1.5, centerDist * 0.1));
+
+                        const bSpeed = 0.005; // Very slow expansion
+                        const pointsPerFrame = 60; // Denser
+                        const maxT = maxR / bSpeed;
+                        const spawnThreshold = maxT * 0.5; // Spawn new at 50%
 
                         if (state.activeBeams.length === 0 ||
                             (state.activeBeams[state.activeBeams.length - 1] > spawnThreshold &&
@@ -565,15 +584,18 @@
 
                         for (let s = state.activeBeams.length - 1; s >= 0; s--) {
                             let t = state.activeBeams[s];
-                            const r = t * 0.01; // Radius expansion (Slower)
+                            const r = t * bSpeed;
 
-                            // Generate full circle at radius r
                             for (let i = 0; i < pointsPerFrame; i++) {
-                                const theta = (i / pointsPerFrame) * Math.PI * 2; // Even distribution
-                                dirs.push({
-                                    h: state.yaw + Math.cos(theta) * r,
-                                    v: state.pitch + Math.sin(theta) * r
-                                });
+                                const theta = (i / pointsPerFrame) * Math.PI * 2;
+                                // Local circle on XY plane
+                                const localX = Math.cos(theta) * r;
+                                const localY = Math.sin(theta) * r;
+                                const localZ = -Math.cos(r); // Slight curvature adjustment optional
+
+                                const v = new THREE.Vector3(localX, localY, -1).normalize();
+                                v.applyQuaternion(camera.quaternion);
+                                dirs.push(v);
                             }
                             state.activeBeams[s] += 0.5;
 
@@ -582,18 +604,16 @@
                             }
                         }
                     } else if (state.scanMode === 'line') {
-                        // Line scan - toggle between horizontal and vertical with T
                         for (let i = 0; i < 100; i++) {
-                            const offset = (i / 100 - 0.5) * Math.PI; // Full 180 degrees
+                            const offset = (i / 100 - 0.5) * Math.PI; // 180 deg
                             if (state.lineHorizontal) {
-                                dirs.push({ h: state.yaw + offset, v: state.pitch });
+                                dirs.push(getDir(offset, 0));
                             } else {
-                                dirs.push({ h: state.yaw, v: state.pitch + offset });
+                                dirs.push(getDir(0, offset));
                             }
                         }
                     } else if (state.scanMode === 'spiral') {
                         // Adaptive Continuous Spirals
-                        // 1. Raycast center to find max distance
                         const centerRay = new THREE.Raycaster();
                         const centerDir = new THREE.Vector3();
                         camera.getWorldDirection(centerDir);
@@ -601,15 +621,13 @@
                         const centerHits = centerRay.intersectObjects(colliders, false);
                         const centerDist = centerHits.length > 0 ? centerHits[0].distance : 20;
 
-                        // 2. Adjust max angle based on distance (Close = tight spiral, Far = wide spiral)
-                        // At 1m -> 0.1 rad, At 20m -> 1.5 rad (Wider max)
                         const maxR = Math.max(0.15, Math.min(1.5, centerDist * 0.1));
 
                         const a = 0.001;
                         const b = 0.015;
                         const pointsPerFrame = 25;
-                        const maxT = maxR / b; // Calculate max T based on max Radius
-                        const spawnThreshold = maxT * 0.5; // Spawn new at 50% completion
+                        const maxT = maxR / b;
+                        const spawnThreshold = maxT * 0.5;
 
                         if (state.activeSpirals.length === 0 ||
                             (state.activeSpirals[state.activeSpirals.length - 1] > spawnThreshold &&
@@ -624,10 +642,12 @@
                                 const theta = t + i * 0.15;
                                 const r = a + b * theta;
                                 if (r < maxR) {
-                                    dirs.push({
-                                        h: state.yaw + Math.cos(theta) * r,
-                                        v: state.pitch + Math.sin(theta) * r
-                                    });
+                                    // Local spiral
+                                    const localX = Math.cos(theta) * r;
+                                    const localY = Math.sin(theta) * r;
+                                    const v = new THREE.Vector3(localX, localY, -1).normalize();
+                                    v.applyQuaternion(camera.quaternion);
+                                    dirs.push(v);
                                 }
                             }
                             state.activeSpirals[s] += 0.25;
@@ -638,15 +658,7 @@
                         }
                     }
 
-
-
-
-
-                    for (const d of dirs) {
-                        const dir = new THREE.Vector3(0, 0, -1);
-                        dir.applyAxisAngle(new THREE.Vector3(1, 0, 0), d.v);
-                        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), d.h);
-
+                    for (const dir of dirs) {
                         raycaster.set(camera.position, dir.normalize());
                         const hits = raycaster.intersectObjects(colliders, false);
 
