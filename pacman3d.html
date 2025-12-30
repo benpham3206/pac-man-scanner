@@ -349,7 +349,7 @@
                 const ghostPoints = []; // Fade after 5s
                 const pointGeometry = new THREE.BufferGeometry();
                 const pointMaterial = new THREE.PointsMaterial({
-                    size: 3,
+                    size: 1.5, // Even smaller points for finer detail
                     vertexColors: true,
                     sizeAttenuation: false
                 });
@@ -455,7 +455,8 @@
                 const onKeyDown = e => {
                     state.keys[e.key.toLowerCase()] = true;
                     if (e.key === 'q') { state.scanMode = 'default'; setScanMode('default'); }
-                    if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); state.activeBeams = [0]; }
+                    if (e.key === 'q') { state.scanMode = 'default'; setScanMode('default'); }
+                    if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); state.activeBeams = [0]; } // Initial pulse on switch
                     if (e.key === 'r') { state.scanMode = 'spiral'; setScanMode('spiral'); state.activeSpirals = [0]; }
                     if (e.key === 't') {
                         // Always cycle orientation
@@ -484,6 +485,10 @@
                 const onMouseDown = e => {
                     if (e.button === 0 && document.pointerLockElement === renderer.domElement) {
                         state.scanning = true;
+                        if (state.scanMode === 'beam') {
+                            // Manual trigger: Start a new pulse on click
+                            state.activeBeams.push(0);
+                        }
                     }
                 };
                 const onMouseUp = e => { if (e.button === 0) state.scanning = false; };
@@ -576,11 +581,8 @@
                         const maxT = maxR / bSpeed;
                         const spawnThreshold = maxT * 0.5; // Spawn new at 50%
 
-                        if (state.activeBeams.length === 0 ||
-                            (state.activeBeams[state.activeBeams.length - 1] > spawnThreshold &&
-                                state.activeBeams[state.activeBeams.length - 1] < spawnThreshold + 1)) {
-                            state.activeBeams.push(0);
-                        }
+                        // Auto-spawn removed for manual trigger behavior
+                        // New pulses are added in onMouseDown
 
                         for (let s = state.activeBeams.length - 1; s >= 0; s--) {
                             let t = state.activeBeams[s];
