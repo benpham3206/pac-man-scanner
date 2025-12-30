@@ -481,7 +481,11 @@
                     state.yaw -= e.movementX * state.mouseSens;
                     state.pitch = Math.max(-1.2, Math.min(1.2, state.pitch - e.movementY * state.mouseSens));
                 };
-                const onMouseDown = e => { if (e.button === 0) state.scanning = true; };
+                const onMouseDown = e => {
+                    if (e.button === 0 && document.pointerLockElement === renderer.domElement) {
+                        state.scanning = true;
+                    }
+                };
                 const onMouseUp = e => { if (e.button === 0) state.scanning = false; };
                 const onClick = () => {
                     initAudio(); // Initialize audio on first click
@@ -946,7 +950,7 @@
                                     }
                                     // Pellets on minimap (permanent until collected)
                                     if ((maze[row][col] === 2 || maze[row][col] === 3) && !collectedPellets.has(id)) {
-                                        ctx.fillStyle = maze[row][col] === 3 ? '#ff44ff' : '#ffff00';
+                                        ctx.fillStyle = maze[row][col] === 3 ? '#ff0000' : '#ffff00';
                                         ctx.beginPath();
                                         ctx.arc(x + cs / 2, y + cs / 2, maze[row][col] === 3 ? 2.5 : 1.5, 0, Math.PI * 2);
                                         ctx.fill();
@@ -991,8 +995,8 @@
                             }
                         }
 
-                        // Scanned ghosts - blink and fade after 10s
-                        const GHOST_FADE_TIME = 10000; // 10 seconds
+                        // Scanned ghosts - blink and fade after 5s
+                        const GHOST_FADE_TIME = 5000; // 5 seconds
                         const now = Date.now();
                         scannedGhosts.filter(ghost => now - ghost.timestamp < GHOST_FADE_TIME).forEach(ghost => {
                             const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize + 0.5) * cs;
@@ -1122,7 +1126,7 @@
                                         ctx.fillRect(x, y, cs, cs);
                                     }
                                     if ((maze[row][col] === 2 || maze[row][col] === 3) && !collectedPellets.has(id)) {
-                                        ctx.fillStyle = maze[row][col] === 3 ? '#ff44ff' : '#ffff00';
+                                        ctx.fillStyle = maze[row][col] === 3 ? '#ff0000' : '#ffff00';
                                         ctx.beginPath();
                                         ctx.arc(x + cs / 2, y + cs / 2, maze[row][col] === 3 ? 5 : 3, 0, Math.PI * 2);
                                         ctx.fill();
@@ -1131,8 +1135,8 @@
                             }
                         }
 
-                        // Ghosts - fade after 10s
-                        const GHOST_FADE_TIME = 10000;
+                        // Ghosts - fade after 5s
+                        const GHOST_FADE_TIME = 5000;
                         const now = Date.now();
                         scannedGhosts.filter(ghost => now - ghost.timestamp < GHOST_FADE_TIME).forEach(ghost => {
                             const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize + 0.5) * cs;
