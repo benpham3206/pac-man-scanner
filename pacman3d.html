@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PAC-MAN: SCANNER</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body,
+        #root {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        .minimap-container {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.95);
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            border: 1px solid #333;
+        }
+
+        .minimap-title {
+            font-size: 0.6rem;
+            color: #555;
+            text-align: center;
+            margin-bottom: 0.25rem;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+        }
+
+        .hud {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 1rem 1.25rem;
+            border-radius: 0.5rem;
+            border: 1px solid #333;
+            text-align: right;
+        }
+
+        .score {
+            color: #fff;
+            font-size: 1.4rem;
+            font-weight: 300;
+            font-family: monospace;
+            margin-bottom: 0.5rem;
+        }
+
+        .lives {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.3rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .life {
+            width: 0.9rem;
+            height: 0.9rem;
+            border-radius: 50%;
+            border: 1px solid #555;
+        }
+
+        .life-active {
+            background: #fff;
+        }
+
+        .pellets-text {
+            color: #666;
+            font-size: 0.75rem;
+            font-family: monospace;
+        }
+
+        .points-text {
+            color: #444;
+            font-size: 0.6rem;
+            font-family: monospace;
+            margin-top: 0.25rem;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 0.6rem 1.5rem;
+            border-radius: 0.5rem;
+            border: 1px solid #333;
+            color: #555;
+            font-size: 0.75rem;
+        }
+
+        .key {
+            color: #aaa;
+            font-weight: bold;
+            margin: 0 0.2rem;
+        }
+
+        .crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 16px;
+            height: 16px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .crosshair::before,
+        .crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        .crosshair::before {
+            width: 1px;
+            height: 16px;
+            left: 7px;
+        }
+
+        .crosshair::after {
+            width: 16px;
+            height: 1px;
+            top: 7px;
+        }
+
+        .scan-mode {
+            position: absolute;
+            bottom: 3.5rem;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #666;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const PacManScanner = () => {
+            const containerRef = useRef(null);
+            const [gameState, setGameState] = useState('menu');
+            const [score, setScore] = useState(0);
+            const [lives, setLives] = useState(3);
+            const [pelletsCollected, setPelletsCollected] = useState(0);
+            const [totalPellets, setTotalPellets] = useState(157);
+            const [pointCount, setPointCount] = useState(0);
+            const [scanMode, setScanMode] = useState('default');
+            const [showExpandedMap, setShowExpandedMap] = useState(false);
+
+            const gameDataRef = useRef({
+                playerPos: { x: 0, z: 0 },
+                playerRotation: 0,
+                scannedCells: new Set(),
+                scannedGhosts: [],
+                collectedPellets: new Set(),
+                activeScanHits: [],
+                isScanning: false
+            });
+
+            const maze = [
+                [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                [1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+                [1, 2, 1, 1, 2, 1, 1, 1, 2, 1, 2, 1, 1, 1, 2, 1, 1, 2, 1],
+                [1, 3, 1, 1, 2, 1, 1, 1, 2, 1, 2, 1, 1, 1, 2, 1, 1, 3, 1],
+                [1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+                [1, 2, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 2, 1],
+                [1, 2, 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 2, 1],
+                [1, 1, 1, 1, 2, 1, 1, 1, 0, 1, 0, 1, 1, 1, 2, 1, 1, 1, 1],
+                [0, 0, 0, 1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 0, 0],
+                [1, 1, 1, 1, 2, 1, 0, 1, 1, 0, 1, 1, 0, 1, 2, 1, 1, 1, 1],
+                [0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0],
+                [1, 1, 1, 1, 2, 1, 0, 1, 1, 1, 1, 1, 0, 1, 2, 1, 1, 1, 1],
+                [0, 0, 0, 1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 0, 0],
+                [1, 1, 1, 1, 2, 1, 0, 1, 1, 1, 1, 1, 0, 1, 2, 1, 1, 1, 1],
+                [1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+                [1, 2, 1, 1, 2, 1, 1, 1, 2, 1, 2, 1, 1, 1, 2, 1, 1, 2, 1],
+                [1, 3, 2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 3, 1],
+                [1, 1, 2, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, 2, 1, 2, 1, 1],
+                [1, 2, 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 2, 1],
+                [1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1],
+                [1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1],
+                [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+            ];
+
+            const cellSize = 2;
+
+            useEffect(() => {
+                if (!containerRef.current || gameState === 'menu') return;
+
+                const scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x000000);
+
+                const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                const renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                containerRef.current.appendChild(renderer.domElement);
+
+                // Audio setup with reverb
+                let audioCtx = null;
+                let convolver = null;
+                let masterGain = null;
+
+                const initAudio = () => {
+                    if (audioCtx) return;
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+                    // Create reverb impulse response
+                    const sampleRate = audioCtx.sampleRate;
+                    const length = sampleRate * 2; // 2 second reverb
+                    const impulse = audioCtx.createBuffer(2, length, sampleRate);
+
+                    for (let channel = 0; channel < 2; channel++) {
+                        const data = impulse.getChannelData(channel);
+                        for (let i = 0; i < length; i++) {
+                            data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2.5);
+                        }
+                    }
+
+                    convolver = audioCtx.createConvolver();
+                    convolver.buffer = impulse;
+
+                    masterGain = audioCtx.createGain();
+                    masterGain.gain.value = 0.3;
+
+                    convolver.connect(masterGain);
+                    masterGain.connect(audioCtx.destination);
+                };
+
+                // Sound effects with reverb
+                const playTone = (freq, duration, type = 'sine', volume = 0.1) => {
+                    if (!audioCtx) return;
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = type;
+                    osc.frequency.value = freq;
+                    gain.gain.value = volume;
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                    osc.connect(gain);
+                    gain.connect(convolver); // Through reverb
+                    gain.connect(audioCtx.destination); // Dry signal
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + duration);
+                };
+
+                const playScanSound = () => {
+                    if (!audioCtx) return;
+                    const freq = 800 + Math.random() * 400;
+                    playTone(freq, 0.05, 'sine', 0.02);
+                };
+
+                const playPelletSound = () => {
+                    if (!audioCtx) return;
+                    playTone(587, 0.1, 'sine', 0.15);
+                    setTimeout(() => playTone(880, 0.1, 'sine', 0.12), 50);
+                };
+
+                const playPowerPelletSound = () => {
+                    if (!audioCtx) return;
+                    [523, 659, 784, 1047].forEach((f, i) => {
+                        setTimeout(() => playTone(f, 0.15, 'sine', 0.12), i * 80);
+                    });
+                };
+
+                const playDeathSound = () => {
+                    if (!audioCtx) return;
+                    for (let i = 0; i < 8; i++) {
+                        setTimeout(() => playTone(400 - i * 40, 0.15, 'sawtooth', 0.08), i * 100);
+                    }
+                };
+
+                const playGhostEatSound = () => {
+                    if (!audioCtx) return;
+                    playTone(200, 0.2, 'square', 0.1);
+                    setTimeout(() => playTone(400, 0.15, 'square', 0.08), 100);
+                };
+
+                // Ghost proximity sound - continuous low hum
+                let ghostOsc = null;
+                let ghostGain = null;
+                const updateGhostProximitySound = (minDist) => {
+                    if (!audioCtx) return;
+                    if (minDist < 8) {
+                        if (!ghostOsc) {
+                            ghostOsc = audioCtx.createOscillator();
+                            ghostGain = audioCtx.createGain();
+                            ghostOsc.type = 'sine';
+                            ghostOsc.frequency.value = 60;
+                            ghostOsc.connect(ghostGain);
+                            ghostGain.connect(convolver);
+                            ghostGain.connect(audioCtx.destination);
+                            ghostOsc.start();
+                        }
+                        const volume = Math.max(0, (8 - minDist) / 8) * 0.15;
+                        ghostGain.gain.setTargetAtTime(volume, audioCtx.currentTime, 0.1);
+                        ghostOsc.frequency.setTargetAtTime(60 + (8 - minDist) * 10, audioCtx.currentTime, 0.1);
+                    } else if (ghostOsc) {
+                        ghostGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.3);
+                    }
+                };
+
+                const state = {
+                    moveSpeed: 0.055,
+                    mouseSens: 0.002,
+                    keys: {},
+                    yaw: 0,
+                    pitch: 0,
+                    scanning: false,
+                    scanMode: 'default',
+                    spiralT: 0,
+                    lineHorizontal: true, // Toggle for line scan orientation
+                    score: 0,
+                    lives: 3,
+                    pelletsCollected: 0
+                };
+
+                // Point cloud - permanent wall points, fading pellet points
+                const wallPoints = []; // Permanent
+                const pelletPoints = []; // Fade after 10s
+                const pointGeometry = new THREE.BufferGeometry();
+                const pointMaterial = new THREE.PointsMaterial({
+                    size: 3,
+                    vertexColors: true,
+                    sizeAttenuation: false
+                });
+                const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
+                pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
+                scene.add(pointCloud);
+
+                const PELLET_FADE_TIME = 600;
+                let geometryDirty = false;
+
+                const colliders = [];
+                const pelletMeshes = [];
+                let pelletCount = 0;
+
+                const wallHeight = 3;
+                for (let row = 0; row < maze.length; row++) {
+                    for (let col = 0; col < maze[row].length; col++) {
+                        const x = col * cellSize - (maze[0].length * cellSize) / 2;
+                        const z = row * cellSize - (maze.length * cellSize) / 2;
+
+                        if (maze[row][col] === 1) {
+                            const wall = new THREE.Mesh(
+                                new THREE.BoxGeometry(cellSize, wallHeight, cellSize),
+                                new THREE.MeshBasicMaterial({ visible: false })
+                            );
+                            wall.position.set(x, wallHeight / 2, z);
+                            wall.userData = { type: 'wall', row, col };
+                            scene.add(wall);
+                            colliders.push(wall);
+                        } else if (maze[row][col] === 2 || maze[row][col] === 3) {
+                            const isPower = maze[row][col] === 3;
+                            const pellet = new THREE.Mesh(
+                                new THREE.SphereGeometry(isPower ? 0.4 : 0.25, 12, 12),
+                                new THREE.MeshBasicMaterial({ visible: false })
+                            );
+                            pellet.position.set(x, 1.2, z);
+                            pellet.userData = {
+                                type: 'pellet',
+                                id: `${row}-${col}`,
+                                points: isPower ? 50 : 10,
+                                isPower,
+                                collected: false
+                            };
+                            scene.add(pellet);
+                            colliders.push(pellet);
+                            pelletMeshes.push(pellet);
+                            pelletCount++;
+                        }
+                    }
+                }
+                setTotalPellets(pelletCount);
+
+                const ground = new THREE.Mesh(
+                    new THREE.PlaneGeometry(100, 100),
+                    new THREE.MeshBasicMaterial({ visible: false })
+                );
+                ground.rotation.x = -Math.PI / 2;
+                ground.userData = { type: 'ground' };
+                scene.add(ground);
+                colliders.push(ground);
+
+                const ceiling = new THREE.Mesh(
+                    new THREE.PlaneGeometry(100, 100),
+                    new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide })
+                );
+                ceiling.rotation.x = Math.PI / 2;
+                ceiling.position.y = wallHeight;
+                ceiling.userData = { type: 'ceiling' };
+                scene.add(ceiling);
+                colliders.push(ceiling);
+
+                camera.position.set(0, 1.6, 18);
+
+                const ghosts = [];
+                const ghostColors = [0xff3333, 0xff66cc, 0x33ffff, 0xffaa33];
+                const ghostSpawns = [{ x: -2, z: -2 }, { x: 2, z: -2 }, { x: -2, z: 2 }, { x: 2, z: 2 }];
+
+                ghostSpawns.forEach((pos, i) => {
+                    const ghost = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.7, 8, 8),
+                        new THREE.MeshBasicMaterial({ visible: false })
+                    );
+                    ghost.position.set(pos.x, 0.7, pos.z);
+                    ghost.userData = {
+                        type: 'ghost',
+                        index: i,
+                        color: ghostColors[i],
+                        speed: 0.022 + Math.random() * 0.012,
+                        dir: Math.random() * Math.PI * 2,
+                        scared: false,
+                        scaredTimer: 0
+                    };
+                    scene.add(ghost);
+                    colliders.push(ghost);
+                    ghosts.push(ghost);
+                });
+
+                const raycaster = new THREE.Raycaster();
+                raycaster.far = 35;
+
+                // Input handlers
+                const onKeyDown = e => {
+                    state.keys[e.key.toLowerCase()] = true;
+                    if (e.key === 'q') { state.scanMode = 'default'; setScanMode('default'); }
+                    if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); }
+                    if (e.key === 'r') { state.scanMode = 'spiral'; setScanMode('spiral'); state.spiralT = 0; }
+                    if (e.key === 't') {
+                        // Always cycle orientation
+                        state.lineHorizontal = !state.lineHorizontal;
+                        state.scanMode = 'line';
+                        setScanMode(state.lineHorizontal ? 'line-h' : 'line-v');
+                    }
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                        setShowExpandedMap(true);
+                    }
+                    if (e.key === 'Escape') { setShowExpandedMap(false); }
+                };
+                const onKeyUp = e => {
+                    state.keys[e.key.toLowerCase()] = false;
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                        setShowExpandedMap(false);
+                    }
+                };
+                const onMouseMove = e => {
+                    if (document.pointerLockElement !== renderer.domElement) return;
+                    state.yaw -= e.movementX * state.mouseSens;
+                    state.pitch = Math.max(-1.2, Math.min(1.2, state.pitch - e.movementY * state.mouseSens));
+                };
+                const onMouseDown = e => { if (e.button === 0) state.scanning = true; };
+                const onMouseUp = e => { if (e.button === 0) state.scanning = false; };
+                const onClick = () => {
+                    initAudio(); // Initialize audio on first click
+                    if (document.pointerLockElement !== renderer.domElement) {
+                        renderer.domElement.requestPointerLock();
+                    }
+                };
+
+                document.addEventListener('keydown', onKeyDown);
+                document.addEventListener('keyup', onKeyUp);
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mousedown', onMouseDown);
+                document.addEventListener('mouseup', onMouseUp);
+                renderer.domElement.addEventListener('click', onClick);
+
+                const onResize = () => {
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                };
+                window.addEventListener('resize', onResize);
+
+                const toGrid = (x, z) => ({
+                    row: Math.round((z + maze.length * cellSize / 2) / cellSize),
+                    col: Math.round((x + maze[0].length * cellSize / 2) / cellSize)
+                });
+
+                const isWall = (x, z) => {
+                    const g = toGrid(x, z);
+                    if (g.row < 0 || g.row >= maze.length || g.col < 0 || g.col >= maze[0].length) return true;
+                    return maze[g.row][g.col] === 1;
+                };
+
+                const checkCol = (pos, r = 0.32) => {
+                    const offsets = [[r, 0], [-r, 0], [0, r], [0, -r], [r * 0.7, r * 0.7], [-r * 0.7, r * 0.7], [r * 0.7, -r * 0.7], [-r * 0.7, -r * 0.7]];
+                    return offsets.some(([dx, dz]) => isWall(pos.x + dx, pos.z + dz));
+                };
+
+                const distColor = d => {
+                    const t = Math.min(1, d / 30);
+                    const v = 1 - t * 0.6;
+                    return { r: v, g: v, b: v };
+                };
+
+                // Scan function
+                const scan = () => {
+                    const dirs = [];
+                    const scanHits = [];
+
+                    // Subtle scan sound with reverb
+                    if (Math.random() < 0.15) playScanSound();
+
+                    if (state.scanMode === 'default') {
+                        for (let i = 0; i < 45; i++) {
+                            dirs.push({
+                                h: state.yaw + (Math.random() - 0.5) * Math.PI / 2.5,
+                                v: state.pitch + (Math.random() - 0.5) * Math.PI / 3.5
+                            });
+                        }
+                    } else if (state.scanMode === 'beam') {
+                        // Random uniform cone distribution (Flashlight)
+                        // Use rejection sampling or polar coordinates with sqrt(r) for uniform disk
+                        const coneAngle = 0.15; // Max radius in radians
+                        const pointsPerFrame = 70;
+
+                        for (let i = 0; i < pointsPerFrame; i++) {
+                            // Uniform distribution in a circle: r = sqrt(random) * R
+                            const r = Math.sqrt(Math.random()) * coneAngle;
+                            const theta = Math.random() * Math.PI * 2;
+
+                            const hOffset = Math.cos(theta) * r;
+                            const vOffset = Math.sin(theta) * r;
+
+                            dirs.push({
+                                h: state.yaw + hOffset,
+                                v: state.pitch + vOffset
+                            });
+                        }
+                    } else if (state.scanMode === 'line') {
+                        // Line scan - toggle between horizontal and vertical with T
+                        for (let i = 0; i < 30; i++) {
+                            const offset = (i / 30 - 0.5) * Math.PI / 2;
+                            if (state.lineHorizontal) {
+                                dirs.push({ h: state.yaw + offset, v: state.pitch });
+                            } else {
+                                dirs.push({ h: state.yaw, v: state.pitch + offset });
+                            }
+                        }
+                    } else if (state.scanMode === 'spiral') {
+                        // Archimedes spiral: r = a + b*theta, starting from center going outward
+                        // Single continuous line emanating from crosshair center
+                        const a = 0.001; // Start very close to center
+                        const b = 0.015; // How fast it expands
+                        const pointsPerFrame = 25;
+
+                        for (let i = 0; i < pointsPerFrame; i++) {
+                            const theta = state.spiralT + i * 0.15;
+                            const r = a + b * theta;
+                            // Clamp radius to reasonable viewing angle
+                            if (r < 0.6) {
+                                dirs.push({
+                                    h: state.yaw + Math.cos(theta) * r,
+                                    v: state.pitch + Math.sin(theta) * r
+                                });
+                            }
+                        }
+                        state.spiralT += 0.25; // Advance spiral
+                        // Reset spiral when it gets too big
+                        if (state.spiralT > 40) state.spiralT = 0;
+                    }
+
+                    for (const d of dirs) {
+                        const dir = new THREE.Vector3(0, 0, -1);
+                        dir.applyAxisAngle(new THREE.Vector3(1, 0, 0), d.v);
+                        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), d.h);
+
+                        raycaster.set(camera.position, dir.normalize());
+                        const hits = raycaster.intersectObjects(colliders, false);
+
+                        if (hits.length > 0) {
+                            const hit = hits[0];
+                            const dist = hit.distance;
+                            const data = hit.object.userData;
+
+                            // Track for minimap - store actual distance
+                            scanHits.push({ x: hit.point.x, z: hit.point.z, dist });
+
+                            // Mark cell as scanned
+                            const g = toGrid(hit.point.x, hit.point.z);
+                            gameDataRef.current.scannedCells.add(`${g.row}-${g.col}`);
+                            if (data.row !== undefined) {
+                                gameDataRef.current.scannedCells.add(`${data.row}-${data.col}`);
+                            }
+
+                            const noise = 0.012;
+                            const px = hit.point.x + (Math.random() - 0.5) * noise;
+                            const py = hit.point.y + (Math.random() - 0.5) * noise;
+                            const pz = hit.point.z + (Math.random() - 0.5) * noise;
+
+                            if (data.type === 'ghost') {
+                                const c = data.color;
+                                wallPoints.push({
+                                    x: px, y: py, z: pz,
+                                    r: ((c >> 16) & 255) / 255,
+                                    g: ((c >> 8) & 255) / 255,
+                                    b: (c & 255) / 255
+                                });
+                                // Update ghost position for minimap
+                                const existing = gameDataRef.current.scannedGhosts.find(g => g.index === data.index);
+                                if (existing) {
+                                    existing.x = hit.object.position.x;
+                                    existing.z = hit.object.position.z;
+                                    existing.scared = data.scared;
+                                } else {
+                                    gameDataRef.current.scannedGhosts.push({
+                                        index: data.index, x: hit.object.position.x, z: hit.object.position.z,
+                                        color: data.color, scared: data.scared
+                                    });
+                                }
+                            } else if (data.type === 'pellet' && !data.collected) {
+                                // Brighter yellow pellets - more visible
+                                pelletPoints.push({
+                                    x: px, y: py, z: pz,
+                                    r: 1, g: 1, b: data.isPower ? 0.6 : 0.1, // Brighter yellow
+                                    life: PELLET_FADE_TIME,
+                                    pelletId: data.id
+                                });
+                            } else {
+                                // Walls = white gradient
+                                const col = distColor(dist);
+                                wallPoints.push({ x: px, y: py, z: pz, r: col.r, g: col.g, b: col.b });
+                            }
+                        }
+                    }
+
+                    gameDataRef.current.activeScanHits = scanHits;
+                    gameDataRef.current.isScanning = true;
+                    geometryDirty = true;
+                };
+
+                // Update points
+                const updatePoints = () => {
+                    // Fade pellet points
+                    for (let i = pelletPoints.length - 1; i >= 0; i--) {
+                        pelletPoints[i].life--;
+                        // Remove if faded OR if pellet was collected
+                        if (pelletPoints[i].life <= 0 ||
+                            gameDataRef.current.collectedPellets.has(pelletPoints[i].pelletId)) {
+                            pelletPoints.splice(i, 1);
+                            geometryDirty = true;
+                        }
+                    }
+
+                    if (!geometryDirty) return;
+
+                    const allPoints = [...wallPoints, ...pelletPoints];
+                    if (allPoints.length === 0) return;
+
+                    const pos = new Float32Array(allPoints.length * 3);
+                    const col = new Float32Array(allPoints.length * 3);
+
+                    allPoints.forEach((p, i) => {
+                        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+                        const alpha = p.life !== undefined ? Math.min(1, p.life / 150) : 1;
+                        col[i * 3] = p.r * alpha;
+                        col[i * 3 + 1] = p.g * alpha;
+                        col[i * 3 + 2] = p.b * alpha;
+                    });
+
+                    pointGeometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                    pointGeometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+                    geometryDirty = false;
+                    setPointCount(allPoints.length);
+                };
+
+                let time = 0;
+
+                const animate = () => {
+                    state.animId = requestAnimationFrame(animate);
+                    time += 0.016;
+
+                    // Movement - works even while scanning
+                    const fwd = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.yaw);
+                    const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.yaw);
+                    const newPos = camera.position.clone();
+
+                    if (state.keys['w']) newPos.addScaledVector(fwd, state.moveSpeed);
+                    if (state.keys['s']) newPos.addScaledVector(fwd, -state.moveSpeed);
+                    if (state.keys['a']) newPos.addScaledVector(right, -state.moveSpeed);
+                    if (state.keys['d']) newPos.addScaledVector(right, state.moveSpeed);
+
+                    if (!checkCol(newPos)) {
+                        camera.position.x = newPos.x;
+                        camera.position.z = newPos.z;
+                    }
+                    camera.position.y = 1.6;
+                    camera.quaternion.setFromEuler(new THREE.Euler(state.pitch, state.yaw, 0, 'YXZ'));
+
+                    gameDataRef.current.playerPos = { x: camera.position.x, z: camera.position.z };
+                    gameDataRef.current.playerRotation = state.yaw;
+
+                    // Scanning
+                    if (state.scanning) {
+                        scan();
+                    } else {
+                        gameDataRef.current.activeScanHits = [];
+                        gameDataRef.current.isScanning = false;
+                    }
+                    updatePoints();
+
+                    // Pellet collection - 2D distance
+                    pelletMeshes.forEach(p => {
+                        if (!p.userData.collected) {
+                            const dx = camera.position.x - p.position.x;
+                            const dz = camera.position.z - p.position.z;
+                            if (Math.sqrt(dx * dx + dz * dz) < 0.85) {
+                                p.userData.collected = true;
+                                state.score += p.userData.points;
+                                state.pelletsCollected++;
+                                setScore(state.score);
+                                setPelletsCollected(state.pelletsCollected);
+                                gameDataRef.current.collectedPellets.add(p.userData.id);
+
+                                const idx = colliders.indexOf(p);
+                                if (idx > -1) colliders.splice(idx, 1);
+                                scene.remove(p);
+
+                                if (p.userData.isPower) {
+                                    ghosts.forEach(g => { g.userData.scared = true; g.userData.scaredTimer = 360; });
+                                    playPowerPelletSound();
+                                } else {
+                                    playPelletSound();
+                                }
+
+                                geometryDirty = true; // Force point update to remove pellet points
+                            }
+                        }
+                    });
+
+                    if (state.pelletsCollected >= pelletCount) {
+                        setGameState('win');
+                        return;
+                    }
+
+                    // Ghost AI
+                    let minGhostDist = Infinity;
+                    ghosts.forEach((ghost, i) => {
+                        const gd = ghost.userData;
+                        if (gd.scared) {
+                            gd.scaredTimer--;
+                            if (gd.scaredTimer <= 0) gd.scared = false;
+                        }
+
+                        const toPlayer = new THREE.Vector3(camera.position.x - ghost.position.x, 0, camera.position.z - ghost.position.z);
+                        if (Math.random() < 0.02) {
+                            gd.dir = gd.scared
+                                ? Math.atan2(-toPlayer.z, -toPlayer.x) + (Math.random() - 0.5)
+                                : (Math.random() < 0.5
+                                    ? Math.atan2(toPlayer.z, toPlayer.x) + (Math.random() - 0.5) * 0.4
+                                    : Math.random() * Math.PI * 2);
+                        }
+
+                        const spd = gd.scared ? gd.speed * 0.55 : gd.speed;
+                        const move = new THREE.Vector3(Math.cos(gd.dir), 0, Math.sin(gd.dir));
+                        const newGPos = ghost.position.clone().addScaledVector(move, spd);
+
+                        if (!checkCol(newGPos, 0.45)) {
+                            ghost.position.x = newGPos.x;
+                            ghost.position.z = newGPos.z;
+                        } else {
+                            gd.dir = Math.random() * Math.PI * 2;
+                        }
+                        ghost.position.y = 0.7 + Math.sin(time * 2.5 + i) * 0.08;
+
+                        const dist = Math.hypot(camera.position.x - ghost.position.x, camera.position.z - ghost.position.z);
+
+                        // Track closest ghost for proximity sound
+                        if (dist < minGhostDist) minGhostDist = dist;
+
+                        if (dist < 0.85) {
+                            if (gd.scared) {
+                                ghost.position.set(ghostSpawns[i].x, 0.7, ghostSpawns[i].z);
+                                gd.scared = false;
+                                state.score += 200;
+                                setScore(state.score);
+                                playGhostEatSound();
+                            } else {
+                                state.lives--;
+                                setLives(state.lives);
+                                playDeathSound();
+                                if (state.lives <= 0) { setGameState('gameover'); return; }
+                                camera.position.set(0, 1.6, 18);
+                                state.yaw = state.pitch = 0;
+                                ghosts.forEach((g, j) => {
+                                    g.position.set(ghostSpawns[j].x, 0.7, ghostSpawns[j].z);
+                                    g.userData.scared = false;
+                                });
+                            }
+                        }
+                    });
+
+                    // Update ghost proximity sound
+                    updateGhostProximitySound(minGhostDist);
+
+                    renderer.render(scene, camera);
+                };
+
+                animate();
+
+                return () => {
+                    cancelAnimationFrame(state.animId);
+                    document.removeEventListener('keydown', onKeyDown);
+                    document.removeEventListener('keyup', onKeyUp);
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mousedown', onMouseDown);
+                    document.removeEventListener('mouseup', onMouseUp);
+                    renderer.domElement.removeEventListener('click', onClick);
+                    window.removeEventListener('resize', onResize);
+                    if (document.pointerLockElement) document.exitPointerLock();
+                    if (containerRef.current?.contains(renderer.domElement)) {
+                        containerRef.current.removeChild(renderer.domElement);
+                    }
+                    renderer.dispose();
+                };
+            }, [gameState]);
+
+            const reset = () => {
+                setGameState('menu');
+                setScore(0);
+                setLives(3);
+                setPelletsCollected(0);
+                setPointCount(0);
+                setScanMode('default');
+                gameDataRef.current = {
+                    playerPos: { x: 0, z: 0 }, playerRotation: 0,
+                    scannedCells: new Set(), scannedGhosts: [],
+                    collectedPellets: new Set(), activeScanHits: [], isScanning: false
+                };
+            };
+
+            // Dynamic Minimap with distance-accurate scan lines
+            const Minimap = () => {
+                const canvasRef = useRef(null);
+                const animRef = useRef(null);
+
+                useEffect(() => {
+                    if (!canvasRef.current || gameState !== 'playing') return;
+                    const canvas = canvasRef.current;
+                    const ctx = canvas.getContext('2d');
+                    const cs = 7;
+
+                    const draw = () => {
+                        const { playerPos, playerRotation, scannedCells, scannedGhosts, collectedPellets, activeScanHits, isScanning } = gameDataRef.current;
+
+                        ctx.fillStyle = '#000';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                        // Draw scanned cells (permanent)
+                        for (let row = 0; row < maze.length; row++) {
+                            for (let col = 0; col < maze[row].length; col++) {
+                                const id = `${row}-${col}`;
+                                const x = col * cs, y = row * cs;
+
+                                if (scannedCells.has(id)) {
+                                    if (maze[row][col] === 1) {
+                                        ctx.fillStyle = '#333';
+                                        ctx.fillRect(x + 1, y + 1, cs - 2, cs - 2);
+                                    } else {
+                                        ctx.fillStyle = '#0a0a0a';
+                                        ctx.fillRect(x, y, cs, cs);
+                                    }
+                                    // Pellets on minimap (permanent until collected)
+                                    if ((maze[row][col] === 2 || maze[row][col] === 3) && !collectedPellets.has(id)) {
+                                        ctx.fillStyle = maze[row][col] === 3 ? '#ff44ff' : '#ffff00';
+                                        ctx.beginPath();
+                                        ctx.arc(x + cs / 2, y + cs / 2, maze[row][col] === 3 ? 2.5 : 1.5, 0, Math.PI * 2);
+                                        ctx.fill();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Player position
+                        const px = ((playerPos.x + maze[0].length * cellSize / 2) / cellSize) * cs;
+                        const py = ((playerPos.z + maze.length * cellSize / 2) / cellSize) * cs;
+
+                        // Draw scan line ONLY when actively scanning - shows farthest distance
+                        if (isScanning && activeScanHits.length > 0) {
+                            // Find farthest hit
+                            let farthestDist = 0;
+                            let farthestHit = null;
+                            activeScanHits.forEach(hit => {
+                                if (hit.dist > farthestDist) {
+                                    farthestDist = hit.dist;
+                                    farthestHit = hit;
+                                }
+                            });
+
+                            if (farthestHit) {
+                                const hx = ((farthestHit.x + maze[0].length * cellSize / 2) / cellSize) * cs;
+                                const hy = ((farthestHit.z + maze.length * cellSize / 2) / cellSize) * cs;
+
+                                // Draw single scan line to farthest point
+                                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.moveTo(px, py);
+                                ctx.lineTo(hx, hy);
+                                ctx.stroke();
+
+                                // Small dot at end of scan line
+                                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                                ctx.beginPath();
+                                ctx.arc(hx, hy, 1.5, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                        }
+
+                        // Scanned ghosts - blink at last known position
+                        const blinkAlpha = 0.5 + Math.sin(Date.now() * 0.008) * 0.5;
+                        scannedGhosts.forEach(ghost => {
+                            const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize) * cs;
+                            const gy = ((ghost.z + maze.length * cellSize / 2) / cellSize) * cs;
+                            const color = ghost.scared ? '51, 102, 255' : `${(ghost.color >> 16) & 255}, ${(ghost.color >> 8) & 255}, ${ghost.color & 255}`;
+                            ctx.fillStyle = `rgba(${color}, ${blinkAlpha})`;
+                            ctx.beginPath();
+                            ctx.arc(gx, gy, 3.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        });
+
+                        // Player dot
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // View direction
+                        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.lineTo(px - Math.sin(playerRotation) * 10, py - Math.cos(playerRotation) * 10);
+                        ctx.stroke();
+
+                        animRef.current = requestAnimationFrame(draw);
+                    };
+
+                    draw();
+                    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
+                }, [gameState]);
+
+                return (
+                    <div className="minimap-container">
+                        <div className="minimap-title">Scan</div>
+                        <canvas ref={canvasRef} width={133} height={154} style={{ borderRadius: '3px' }} />
+                    </div>
+                );
+            };
+
+            const HUD = () => (
+                <div className="hud">
+                    <div className="score">{score.toString().padStart(6, '0')}</div>
+                    <div className="lives">
+                        {[0, 1, 2].map(i => <div key={i} className={`life ${i < lives ? 'life-active' : ''}`} />)}
+                    </div>
+                    <div className="pellets-text">{pelletsCollected} / {totalPellets}</div>
+                    <div className="points-text">{pointCount.toLocaleString()} pts</div>
+                    <button onClick={reset} style={{
+                        marginTop: '0.5rem', background: 'transparent', border: '1px solid #444',
+                        color: '#666', padding: '0.3rem 0.6rem', fontSize: '0.6rem', cursor: 'pointer',
+                        borderRadius: '3px', letterSpacing: '0.1em'
+                    }}>RESTART</button>
+                </div>
+            );
+
+            const Controls = () => (
+                <div className="controls">
+                    <span className="key">WASD</span> Move
+                    <span style={{ margin: '0 1rem', color: '#333' }}>•</span>
+                    <span className="key">LMB</span> Scan
+                    <span style={{ margin: '0 1rem', color: '#333' }}>•</span>
+                    <span className="key">Q</span> Default
+                    <span style={{ marginLeft: '0.5rem' }} className="key">E</span> Beam
+                    <span style={{ marginLeft: '0.5rem' }} className="key">R</span> Spiral
+                    <span style={{ marginLeft: '0.5rem' }} className="key">T</span> Line
+                    <span style={{ marginLeft: '0.5rem' }} className="key">TAB (Hold)</span> Map
+                </div>
+            );
+
+            // Expanded Map Overlay
+            const ExpandedMap = () => {
+                const canvasRef = useRef(null);
+                const animRef = useRef(null);
+
+                useEffect(() => {
+                    if (!canvasRef.current || !showExpandedMap) return;
+                    const canvas = canvasRef.current;
+                    const ctx = canvas.getContext('2d');
+                    const cs = 22; // Larger scale
+
+                    const draw = () => {
+                        const { playerPos, playerRotation, scannedCells, scannedGhosts, collectedPellets } = gameDataRef.current;
+
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                        // Draw scanned cells
+                        for (let row = 0; row < maze.length; row++) {
+                            for (let col = 0; col < maze[row].length; col++) {
+                                const id = `${row}-${col}`;
+                                const x = col * cs, y = row * cs;
+
+                                if (scannedCells.has(id)) {
+                                    if (maze[row][col] === 1) {
+                                        ctx.fillStyle = '#444';
+                                        ctx.fillRect(x + 1, y + 1, cs - 2, cs - 2);
+                                    } else {
+                                        ctx.fillStyle = '#111';
+                                        ctx.fillRect(x, y, cs, cs);
+                                    }
+                                    if ((maze[row][col] === 2 || maze[row][col] === 3) && !collectedPellets.has(id)) {
+                                        ctx.fillStyle = maze[row][col] === 3 ? '#ff44ff' : '#ffff00';
+                                        ctx.beginPath();
+                                        ctx.arc(x + cs / 2, y + cs / 2, maze[row][col] === 3 ? 5 : 3, 0, Math.PI * 2);
+                                        ctx.fill();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Ghosts
+                        const blinkAlpha = 0.5 + Math.sin(Date.now() * 0.008) * 0.5;
+                        scannedGhosts.forEach(ghost => {
+                            const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize) * cs;
+                            const gy = ((ghost.z + maze.length * cellSize / 2) / cellSize) * cs;
+                            const color = ghost.scared ? '51, 102, 255' : `${(ghost.color >> 16) & 255}, ${(ghost.color >> 8) & 255}, ${ghost.color & 255}`;
+                            ctx.fillStyle = `rgba(${color}, ${blinkAlpha})`;
+                            ctx.beginPath();
+                            ctx.arc(gx, gy, 8, 0, Math.PI * 2);
+                            ctx.fill();
+                        });
+
+                        // Player
+                        const px = ((playerPos.x + maze[0].length * cellSize / 2) / cellSize) * cs;
+                        const py = ((playerPos.z + maze.length * cellSize / 2) / cellSize) * cs;
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(px, py, 6, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Direction
+                        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.lineTo(px - Math.sin(playerRotation) * 25, py - Math.cos(playerRotation) * 25);
+                        ctx.stroke();
+
+                        animRef.current = requestAnimationFrame(draw);
+                    };
+
+                    draw();
+                    return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
+                }, [showExpandedMap]);
+
+                if (!showExpandedMap) return null;
+
+                return (
+                    <div style={{
+                        position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+                        background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
+                    }}>
+                        <div style={{ textAlign: 'center' }}>
+                            <div style={{ color: '#555', fontSize: '0.7rem', letterSpacing: '0.2em', marginBottom: '1rem' }}>SCAN MAP</div>
+                            <canvas ref={canvasRef} width={418} height={484} style={{ border: '1px solid #333', borderRadius: '5px' }} />
+                            <div style={{ color: '#444', fontSize: '0.65rem', marginTop: '1rem' }}>Release TAB or Press ESC to close</div>
+                        </div>
+                    </div>
+                );
+            };
+
+            if (gameState === 'menu') {
+                return (
+                    <div style={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
+                        <div style={{ textAlign: 'center', color: '#fff', padding: '2rem' }}>
+                            <h1 style={{ fontSize: '2.5rem', fontWeight: '200', letterSpacing: '0.4em', marginBottom: '0.5rem' }}>PAC-MAN</h1>
+                            <h2 style={{ fontSize: '1.2rem', fontWeight: '200', color: '#555', letterSpacing: '0.6em', marginBottom: '3rem' }}>SCANNER</h2>
+                            <p style={{ color: '#666', marginBottom: '2.5rem', lineHeight: 1.8 }}>
+                                Navigate darkness with LIDAR.<br />Collect all pellets. Avoid ghosts.
+                            </p>
+                            <button onClick={() => setGameState('playing')} style={{
+                                background: 'transparent', border: '1px solid #555', color: '#fff',
+                                padding: '0.9rem 3.5rem', fontSize: '0.9rem', cursor: 'pointer', letterSpacing: '0.3em'
+                            }}>BEGIN</button>
+                            <div style={{ marginTop: '3rem', color: '#444', fontSize: '0.7rem', lineHeight: 2 }}>
+                                <p><span style={{ color: '#777' }}>LMB</span> — Scan</p>
+                                <p><span style={{ color: '#777' }}>Q</span> Default  <span style={{ color: '#777' }}>E</span> Point  <span style={{ color: '#777' }}>R</span> Spiral  <span style={{ color: '#777' }}>T</span> Line</p>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (gameState === 'gameover') {
+                return (
+                    <div style={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
+                        <div style={{ textAlign: 'center', color: '#fff' }}>
+                            <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', color: '#ff4444', marginBottom: '2rem' }}>TERMINATED</div>
+                            <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
+                            <p style={{ fontSize: '1.8rem', fontFamily: 'monospace', marginBottom: '2rem' }}>{score}</p>
+                            <button onClick={reset} style={{
+                                background: 'transparent', border: '1px solid #555', color: '#fff',
+                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em'
+                            }}>RETRY</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (gameState === 'win') {
+                return (
+                    <div style={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
+                        <div style={{ textAlign: 'center', color: '#fff' }}>
+                            <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', marginBottom: '2rem' }}>COMPLETE</div>
+                            <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
+                            <p style={{ fontSize: '1.8rem', fontFamily: 'monospace', marginBottom: '2rem' }}>{score}</p>
+                            <button onClick={reset} style={{
+                                background: 'transparent', border: '1px solid #555', color: '#fff',
+                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em'
+                            }}>RESTART</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div style={{ position: 'relative', width: '100%', height: '100vh', background: '#000' }}>
+                    <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+                    <div className="crosshair" />
+                    <Minimap />
+                    <HUD />
+                    <Controls />
+                    <div className="scan-mode">{scanMode}</div>
+                    <ExpandedMap />
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(PacManScanner));
+    </script>
+</body>
+
+</html>
