@@ -357,7 +357,8 @@
                 pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
                 scene.add(pointCloud);
 
-                const GHOST_FADE_TIME = 600; // 10 seconds (in frames at 60fps)
+                const GHOST_FADE_TIME = 300; // 5 seconds (in frames at 60fps)
+                const PELLET_FADE_TIME = 180; // 3 seconds for collected pellets to fade
                 let geometryDirty = false;
 
                 const colliders = [];
@@ -658,10 +659,11 @@
                                     });
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
-                                // Pellets are permanent (yellow)
+                                // Pellets are permanent until collected (yellow)
                                 wallPoints.push({
                                     x: px, y: py, z: pz,
-                                    r: 1, g: 1, b: data.isPower ? 0.6 : 0.1
+                                    r: 1, g: 1, b: data.isPower ? 0.6 : 0.1,
+                                    pelletId: data.id // Track for removal when collected
                                 });
                             } else {
                                 // Walls = white gradient
@@ -678,7 +680,7 @@
 
                 // Update points
                 const updatePoints = () => {
-                    // Fade ghost points (10 seconds)
+                    // Fade ghost points (5 seconds)
                     for (let i = ghostPoints.length - 1; i >= 0; i--) {
                         ghostPoints[i].life--;
                         if (ghostPoints[i].life <= 0) {
@@ -687,7 +689,15 @@
                         }
                     }
 
-                    // Clean up legacy pelletPoints (shouldn't have any new ones)
+                    // Remove collected pellet points from wallPoints
+                    for (let i = wallPoints.length - 1; i >= 0; i--) {
+                        if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
+                            wallPoints.splice(i, 1);
+                            geometryDirty = true;
+                        }
+                    }
+
+                    // Clean up legacy pelletPoints
                     for (let i = pelletPoints.length - 1; i >= 0; i--) {
                         pelletPoints[i].life--;
                         if (pelletPoints[i].life <= 0 ||
@@ -1241,7 +1251,7 @@
 
             if (gameState === 'gameover') {
                 return (
-                    <div style={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
+                    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', zIndex: 1000 }}>
                         <div style={{ textAlign: 'center', color: '#fff' }}>
                             <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', color: '#ff4444', marginBottom: '2rem' }}>TERMINATED</div>
                             <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
@@ -1261,7 +1271,7 @@
 
             if (gameState === 'win') {
                 return (
-                    <div style={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
+                    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', zIndex: 1000 }}>
                         <div style={{ textAlign: 'center', color: '#fff' }}>
                             <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', marginBottom: '2rem' }}>COMPLETE</div>
                             <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
