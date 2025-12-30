@@ -542,38 +542,21 @@
                             });
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Flashlight beam - circle that spreads with distance
-                        // Create concentric rings with slight random variation
-                        const maxAngle = 0.12; // Cone spread in radians
-                        const ringCount = 8;
-                        const centerPoints = 5;
+                        // Simplified flashlight beam - fewer points for performance
+                        const maxAngle = 0.1;
+                        const pointCount = 25; // Reduced from ~100 to 25
 
-                        // Center cluster for brightness
-                        for (let i = 0; i < centerPoints; i++) {
-                            const a = Math.random() * Math.PI * 2;
-                            const r = Math.random() * 0.01;
+                        // Center point
+                        dirs.push({ h: state.yaw, v: state.pitch });
+
+                        // Random scatter in cone
+                        for (let i = 0; i < pointCount; i++) {
+                            const r = Math.sqrt(Math.random()) * maxAngle;
+                            const theta = Math.random() * Math.PI * 2;
                             dirs.push({
-                                h: state.yaw + Math.cos(a) * r,
-                                v: state.pitch + Math.sin(a) * r
+                                h: state.yaw + Math.cos(theta) * r,
+                                v: state.pitch + Math.sin(theta) * r
                             });
-                        }
-
-                        // Concentric rings - creates circle at hit distance
-                        for (let ring = 1; ring <= ringCount; ring++) {
-                            const ringRadius = (ring / ringCount) * maxAngle;
-                            const pointsInRing = 6 + ring * 4; // More points on outer rings
-
-                            for (let i = 0; i < pointsInRing; i++) {
-                                const theta = (i / pointsInRing) * Math.PI * 2 + ring * 0.3;
-                                // Add slight noise for organic look
-                                const noise = (Math.random() - 0.5) * 0.015;
-                                const r = ringRadius + noise;
-
-                                dirs.push({
-                                    h: state.yaw + Math.cos(theta) * r,
-                                    v: state.pitch + Math.sin(theta) * r
-                                });
-                            }
                         }
                     } else if (state.scanMode === 'line') {
                         // Line scan - toggle between horizontal and vertical with T
@@ -659,10 +642,10 @@
                                     });
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
-                                // Pellets are permanent until collected (yellow)
+                                // Pellets: yellow normal, red power
                                 wallPoints.push({
                                     x: px, y: py, z: pz,
-                                    r: 1, g: 1, b: data.isPower ? 0.6 : 0.1,
+                                    r: 1, g: data.isPower ? 0.2 : 1, b: data.isPower ? 0.2 : 0.1,
                                     pelletId: data.id // Track for removal when collected
                                 });
                             } else {
@@ -807,6 +790,7 @@
                     });
 
                     if (state.pelletsCollected >= pelletCount) {
+                        if (document.pointerLockElement) document.exitPointerLock();
                         setGameState('win');
                         return;
                     }
@@ -857,7 +841,11 @@
                                 state.lives--;
                                 setLives(state.lives);
                                 playDeathSound();
-                                if (state.lives <= 0) { setGameState('gameover'); return; }
+                                if (state.lives <= 0) {
+                                    if (document.pointerLockElement) document.exitPointerLock();
+                                    setGameState('gameover');
+                                    return;
+                                }
                                 camera.position.set(0, 1.6, 18);
                                 state.yaw = state.pitch = 0;
                                 ghosts.forEach((g, j) => {
@@ -934,7 +922,7 @@
                     if (!canvasRef.current || gameState !== 'playing') return;
                     const canvas = canvasRef.current;
                     const ctx = canvas.getContext('2d');
-                    const cs = 11; // 50% bigger (was 7)
+                    const cs = 9; // 25% bigger (was 7)
 
                     const draw = () => {
                         const { playerPos, playerRotation, scannedCells, scannedGhosts, collectedPellets, activeScanHits, isScanning } = gameDataRef.current;
@@ -1067,7 +1055,7 @@
                 return (
                     <div className="minimap-container">
                         <div className="minimap-title">Scan</div>
-                        <canvas ref={canvasRef} width={209} height={242} style={{ borderRadius: '3px' }} />
+                        <canvas ref={canvasRef} width={171} height={198} style={{ borderRadius: '3px' }} />
                     </div>
                 );
             };
