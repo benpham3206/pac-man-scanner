@@ -934,7 +934,7 @@
                     if (!canvasRef.current || gameState !== 'playing') return;
                     const canvas = canvasRef.current;
                     const ctx = canvas.getContext('2d');
-                    const cs = 7;
+                    const cs = 11; // 50% bigger (was 7)
 
                     const draw = () => {
                         const { playerPos, playerRotation, scannedCells, scannedGhosts, collectedPellets, activeScanHits, isScanning } = gameDataRef.current;
@@ -1067,7 +1067,7 @@
                 return (
                     <div className="minimap-container">
                         <div className="minimap-title">Scan</div>
-                        <canvas ref={canvasRef} width={133} height={154} style={{ borderRadius: '3px' }} />
+                        <canvas ref={canvasRef} width={209} height={242} style={{ borderRadius: '3px' }} />
                     </div>
                 );
             };
