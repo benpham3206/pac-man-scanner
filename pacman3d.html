@@ -565,11 +565,11 @@
 
                         for (let s = state.activeBeams.length - 1; s >= 0; s--) {
                             let t = state.activeBeams[s];
-                            const r = t * 0.02; // Radius expansion
+                            const r = t * 0.01; // Radius expansion (Slower)
 
                             // Generate full circle at radius r
                             for (let i = 0; i < pointsPerFrame; i++) {
-                                const theta = (Math.random() * Math.PI * 2);
+                                const theta = (i / pointsPerFrame) * Math.PI * 2; // Even distribution
                                 dirs.push({
                                     h: state.yaw + Math.cos(theta) * r,
                                     v: state.pitch + Math.sin(theta) * r
@@ -583,8 +583,8 @@
                         }
                     } else if (state.scanMode === 'line') {
                         // Line scan - toggle between horizontal and vertical with T
-                        for (let i = 0; i < 30; i++) {
-                            const offset = (i / 30 - 0.5) * Math.PI / 2;
+                        for (let i = 0; i < 100; i++) {
+                            const offset = (i / 100 - 0.5) * Math.PI; // Full 180 degrees
                             if (state.lineHorizontal) {
                                 dirs.push({ h: state.yaw + offset, v: state.pitch });
                             } else {
@@ -602,14 +602,14 @@
                         const centerDist = centerHits.length > 0 ? centerHits[0].distance : 20;
 
                         // 2. Adjust max angle based on distance (Close = tight spiral, Far = wide spiral)
-                        // At 1m -> 0.1 rad, At 20m -> 0.8 rad
-                        const maxR = Math.max(0.15, Math.min(0.8, centerDist * 0.05));
+                        // At 1m -> 0.1 rad, At 20m -> 1.5 rad (Wider max)
+                        const maxR = Math.max(0.15, Math.min(1.5, centerDist * 0.1));
 
                         const a = 0.001;
                         const b = 0.015;
                         const pointsPerFrame = 25;
                         const maxT = maxR / b; // Calculate max T based on max Radius
-                        const spawnThreshold = maxT * 0.7;
+                        const spawnThreshold = maxT * 0.5; // Spawn new at 50% completion
 
                         if (state.activeSpirals.length === 0 ||
                             (state.activeSpirals[state.activeSpirals.length - 1] > spawnThreshold &&
