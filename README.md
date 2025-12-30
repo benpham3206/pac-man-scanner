@@ -15,9 +15,10 @@ A Scanner Sombre-inspired reimagining of the classic PAC-MAN arcade game. Naviga
 ### Scan Modes
 | Key | Mode | Description |
 |-----|------|-------------|
-| **Q** | Default | Random Scatter (Center-biased) |
+
+| **Q** | Default | Full-Screen Scatter (Matches FOV) |
 | **E** | Beam | Flashlight Cone |
-| **R** | Spiral | Archimedes Spiral |
+| **R** | Spiral | Continuous Archimedes Spiral (Auto-Loop) |
 | **T** | Line | Horizontal 180° / Vertical Toggle |
 
 ### Visual Features

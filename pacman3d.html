@@ -336,7 +336,7 @@
                     pitch: 0,
                     scanning: false,
                     scanMode: 'default',
-                    spiralT: 0,
+                    activeSpirals: [0], // Replaces spiralT
                     lineHorizontal: true, // Toggle for line scan orientation
                     score: 0,
                     lives: 3,
@@ -455,7 +455,7 @@
                     state.keys[e.key.toLowerCase()] = true;
                     if (e.key === 'q') { state.scanMode = 'default'; setScanMode('default'); }
                     if (e.key === 'e') { state.scanMode = 'beam'; setScanMode('beam'); }
-                    if (e.key === 'r') { state.scanMode = 'spiral'; setScanMode('spiral'); state.spiralT = 0; }
+                    if (e.key === 'r') { state.scanMode = 'spiral'; setScanMode('spiral'); state.activeSpirals = [0]; }
                     if (e.key === 't') {
                         // Always cycle orientation
                         state.lineHorizontal = !state.lineHorizontal;
@@ -538,10 +538,16 @@
                     if (Math.random() < 0.15) playScanSound();
 
                     if (state.scanMode === 'default') {
-                        for (let i = 0; i < 45; i++) {
+                        // Calculate exact Horizontal FOV from Vertical FOV (75) and Aspect Ratio
+                        const vFOV = THREE.MathUtils.degToRad(camera.fov);
+                        const aspect = camera.aspect;
+                        const hFOV = 2 * Math.atan(Math.tan(vFOV / 2) * aspect);
+
+                        // Scatter within visible screen bounds
+                        for (let i = 0; i < 65; i++) {
                             dirs.push({
-                                h: state.yaw + (Math.random() - 0.5) * Math.PI / 2.5,
-                                v: state.pitch + (Math.random() - 0.5) * Math.PI / 3.5
+                                h: state.yaw + (Math.random() - 0.5) * hFOV,
+                                v: state.pitch + (Math.random() - 0.5) * vFOV
                             });
                         }
                     } else if (state.scanMode === 'beam') {
@@ -573,26 +579,42 @@
                             }
                         }
                     } else if (state.scanMode === 'spiral') {
-                        // Archimedes spiral: r = a + b*theta, starting from center going outward
-                        // Single continuous line emanating from crosshair center
-                        const a = 0.001; // Start very close to center
-                        const b = 0.015; // How fast it expands
+                        // Archimedes spiral: r = a + b*theta
+                        const a = 0.001;
+                        const b = 0.015;
                         const pointsPerFrame = 25;
+                        const maxTheta = 40;
+                        const spawnThreshold = maxTheta * 0.75; // Loop at 75%
 
-                        for (let i = 0; i < pointsPerFrame; i++) {
-                            const theta = state.spiralT + i * 0.15;
-                            const r = a + b * theta;
-                            // Clamp radius to reasonable viewing angle
-                            if (r < 0.6) {
-                                dirs.push({
-                                    h: state.yaw + Math.cos(theta) * r,
-                                    v: state.pitch + Math.sin(theta) * r
-                                });
+                        // Auto-spawn new spiral if last one is far enough
+                        if (state.activeSpirals.length === 0 ||
+                            (state.activeSpirals[state.activeSpirals.length - 1] > spawnThreshold &&
+                                state.activeSpirals[state.activeSpirals.length - 1] < spawnThreshold + 0.3)) {
+                            state.activeSpirals.push(0);
+                        }
+
+                        // Process all active spirals using a backwards loop for safe splicing
+                        for (let s = state.activeSpirals.length - 1; s >= 0; s--) {
+                            let t = state.activeSpirals[s];
+
+                            for (let i = 0; i < pointsPerFrame; i++) {
+                                const theta = t + i * 0.15;
+                                const r = a + b * theta;
+                                if (r < 15) { // Max radius check (approx 40 theta * 0.015 ~ 0.6, let's allow more)
+                                    // Using a wider cap since it loops
+                                    dirs.push({
+                                        h: state.yaw + Math.cos(theta) * r,
+                                        v: state.pitch + Math.sin(theta) * r
+                                    });
+                                }
+                            }
+                            state.activeSpirals[s] += 0.25;
+
+                            // Remove finished spirals
+                            if (state.activeSpirals[s] > maxTheta) {
+                                state.activeSpirals.splice(s, 1);
                             }
                         }
-                        state.spiralT += 0.25; // Advance spiral
-                        // Reset spiral when it gets too big
-                        if (state.spiralT > 40) state.spiralT = 0;
                     }
 
                     for (const d of dirs) {
