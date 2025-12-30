@@ -877,7 +877,23 @@
                     document.removeEventListener('mouseup', onMouseUp);
                     renderer.domElement.removeEventListener('click', onClick);
                     window.removeEventListener('resize', onResize);
-                    if (document.pointerLockElement) document.exitPointerLock();
+
+                    // Stop proximity sound
+                    if (ghostOsc) {
+                        try {
+                            ghostOsc.stop();
+                            ghostOsc.disconnect();
+                        } catch (e) { }
+                    }
+                    if (ghostGain) {
+                        try {
+                            ghostGain.disconnect();
+                        } catch (e) { }
+                    }
+
+                    if (document.pointerLockElement === renderer.domElement) {
+                        document.exitPointerLock();
+                    }
                     if (containerRef.current?.contains(renderer.domElement)) {
                         containerRef.current.removeChild(renderer.domElement);
                     }
@@ -894,7 +910,7 @@
                 setPointCount(0);
                 setScanMode('default');
                 gameDataRef.current = {
-                    playerPos: { x: 0, z: 0 }, playerRotation: 0,
+                    playerPos: { x: 0, z: 18 }, playerRotation: 0,
                     scannedCells: new Set(), scannedGhosts: [],
                     collectedPellets: new Set(), activeScanHits: [], isScanning: false
                 };
@@ -908,13 +924,15 @@
                 setPointCount(0);
                 setScanMode('default');
                 gameDataRef.current = {
-                    playerPos: { x: 0, z: 0 }, playerRotation: 0,
+                    playerPos: { x: 0, z: 18 }, playerRotation: 0,
                     scannedCells: new Set(), scannedGhosts: [],
                     collectedPellets: new Set(), activeScanHits: [], isScanning: false
                 };
+                // Ensure escape from pointers
+                if (document.pointerLockElement) document.exitPointerLock();
                 // Force re-render by toggling game state
                 setGameState('menu');
-                setTimeout(() => setGameState('playing'), 10);
+                setTimeout(() => setGameState('playing'), 50);
             };
 
             // Dynamic Minimap with distance-accurate scan lines
@@ -1243,19 +1261,27 @@
 
             if (gameState === 'gameover') {
                 return (
-                    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', zIndex: 1000 }}>
-                        <div style={{ textAlign: 'center', color: '#fff' }}>
-                            <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', color: '#ff4444', marginBottom: '2rem' }}>TERMINATED</div>
-                            <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
-                            <p style={{ fontSize: '1.8rem', fontFamily: 'monospace', marginBottom: '2rem' }}>{score}</p>
-                            <button onClick={goToMenu} style={{
-                                background: 'transparent', border: '1px solid #555', color: '#fff',
-                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em', marginRight: '1rem'
-                            }}>RETURN TO MENU</button>
-                            <button onClick={restartLevel} style={{
-                                background: 'transparent', border: '1px solid #555', color: '#fff',
-                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em'
-                            }}>RESTART</button>
+                    <div style={{
+                        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        background: '#000', zIndex: 9999, color: '#fff'
+                    }}>
+                        <div style={{ fontSize: '2.5rem', fontWeight: '200', letterSpacing: '0.6em', color: '#ff4444', marginBottom: '3rem' }}>TERMINATED</div>
+                        <div style={{ textAlign: 'center' }}>
+                            <p style={{ color: '#555', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontSize: '0.8rem' }}>Final Score</p>
+                            <p style={{ fontSize: '2.5rem', fontFamily: 'monospace', marginBottom: '4rem' }}>{score.toLocaleString()}</p>
+                            <div style={{ display: 'flex', gap: '2rem' }}>
+                                <button onClick={goToMenu} style={{
+                                    background: 'transparent', border: '1px solid #444', color: '#fff',
+                                    padding: '1rem 2rem', cursor: 'pointer', letterSpacing: '0.3em', fontSize: '0.8rem',
+                                    transition: 'all 0.3s'
+                                }}>MENU</button>
+                                <button onClick={restartLevel} style={{
+                                    background: 'transparent', border: '1px solid #444', color: '#fff',
+                                    padding: '1rem 2rem', cursor: 'pointer', letterSpacing: '0.3em', fontSize: '0.8rem',
+                                    transition: 'all 0.3s'
+                                }}>RESTART</button>
+                            </div>
                         </div>
                     </div>
                 );
@@ -1263,19 +1289,25 @@
 
             if (gameState === 'win') {
                 return (
-                    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', zIndex: 1000 }}>
-                        <div style={{ textAlign: 'center', color: '#fff' }}>
-                            <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', marginBottom: '2rem' }}>COMPLETE</div>
-                            <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
-                            <p style={{ fontSize: '1.8rem', fontFamily: 'monospace', marginBottom: '2rem' }}>{score}</p>
-                            <button onClick={goToMenu} style={{
-                                background: 'transparent', border: '1px solid #555', color: '#fff',
-                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em', marginRight: '1rem'
-                            }}>RETURN TO MENU</button>
-                            <button onClick={restartLevel} style={{
-                                background: 'transparent', border: '1px solid #555', color: '#fff',
-                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em'
-                            }}>RESTART</button>
+                    <div style={{
+                        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        background: '#000', zIndex: 9999, color: '#fff'
+                    }}>
+                        <div style={{ fontSize: '2.5rem', fontWeight: '200', letterSpacing: '0.6em', color: '#ffff00', marginBottom: '3rem' }}>COMPLETE</div>
+                        <div style={{ textAlign: 'center' }}>
+                            <p style={{ color: '#555', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.2em', fontSize: '0.8rem' }}>Final Score</p>
+                            <p style={{ fontSize: '2.5rem', fontFamily: 'monospace', marginBottom: '4rem' }}>{score.toLocaleString()}</p>
+                            <div style={{ display: 'flex', gap: '2rem' }}>
+                                <button onClick={goToMenu} style={{
+                                    background: 'transparent', border: '1px solid #444', color: '#fff',
+                                    padding: '1rem 2rem', cursor: 'pointer', letterSpacing: '0.3em', fontSize: '0.8rem'
+                                }}>MENU</button>
+                                <button onClick={restartLevel} style={{
+                                    background: 'transparent', border: '1px solid #444', color: '#fff',
+                                    padding: '1rem 2rem', cursor: 'pointer', letterSpacing: '0.3em', fontSize: '0.8rem'
+                                }}>RESTART</button>
+                            </div>
                         </div>
                     </div>
                 );
