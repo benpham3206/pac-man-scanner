@@ -594,6 +594,47 @@
                         if (state.spiralT > 40) state.spiralT = 0;
                     }
 
+
+
+                    // Synthetic Scan: Automatically hit pellets/ghosts within FOV with 75% probability
+                    const targets = [...pelletMeshes, ...ghosts];
+                    const cameraDir = new THREE.Vector3();
+                    camera.getWorldDirection(cameraDir);
+
+                    targets.forEach(target => {
+                        if (target.userData.collected) return;
+
+                        // Check range
+                        const vecToTarget = new THREE.Vector3().subVectors(target.position, camera.position);
+                        const dist = vecToTarget.length();
+                        if (dist > 15) return;
+
+                        // Check FOV (~30 degrees)
+                        const angle = vecToTarget.clone().normalize().angleTo(cameraDir);
+                        if (angle < 0.5) {
+                            // Raycast to check line of sight
+                            const ray = new THREE.Raycaster(camera.position, vecToTarget.clone().normalize(), 0, dist + 0.5);
+                            const intersections = ray.intersectObjects(colliders, false);
+                            if (intersections.length > 0 && intersections[0].object === target) {
+                                // Visible! 75% chance to add a point
+                                if (Math.random() < 0.75) {
+                                    // Pick random point on surface approximation
+                                    const p = target.position.clone().add(new THREE.Vector3(
+                                        (Math.random() - 0.5) * 0.5,
+                                        (Math.random() - 0.5) * 1.0,
+                                        (Math.random() - 0.5) * 0.5
+                                    ));
+                                    // Create synthetic hit
+                                    scanHits.push({
+                                        point: p,
+                                        object: target,
+                                        distance: dist
+                                    });
+                                }
+                            }
+                        }
+                    });
+
                     for (const d of dirs) {
                         const dir = new THREE.Vector3(0, 0, -1);
                         dir.applyAxisAngle(new THREE.Vector3(1, 0, 0), d.v);
