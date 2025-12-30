@@ -382,7 +382,7 @@
                         } else if (maze[row][col] === 2 || maze[row][col] === 3) {
                             const isPower = maze[row][col] === 3;
                             const pellet = new THREE.Mesh(
-                                new THREE.SphereGeometry(isPower ? 0.4 : 0.25, 12, 12),
+                                new THREE.SphereGeometry(isPower ? 0.5 : 0.35, 12, 12), // Larger for higher hit rate
                                 new THREE.MeshBasicMaterial({ visible: false })
                             );
                             pellet.position.set(x, 1.2, z);
@@ -429,7 +429,7 @@
 
                 ghostSpawns.forEach((pos, i) => {
                     const ghost = new THREE.Mesh(
-                        new THREE.SphereGeometry(0.7, 8, 8),
+                        new THREE.CapsuleGeometry(0.6, 1.0, 4, 8), // Larger capsule for shape and hit rate
                         new THREE.MeshBasicMaterial({ visible: false })
                     );
                     ghost.position.set(pos.x, 1.2, pos.z);
@@ -629,9 +629,31 @@
                                     r = 0.3; g = 0.5; b = 1.0; // Bright blue when scared
                                 } else {
                                     const c = data.color;
-                                    r = ((c >> 16) & 255) / 255;
-                                    g = ((c >> 8) & 255) / 255;
-                                    b = (c & 255) / 255;
+                                    let r0 = ((c >> 16) & 255) / 255;
+                                    let g0 = ((c >> 8) & 255) / 255;
+                                    let b0 = (c & 255) / 255;
+
+                                    // Saturation boost
+                                    const max = Math.max(r0, g0, b0);
+                                    const min = Math.min(r0, g0, b0);
+                                    const l = (max + min) / 2;
+                                    if (max !== min) {
+                                        const d = max - min;
+                                        const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                                        const newS = Math.min(1, s * 1.5); // 50% saturation boost
+
+                                        // Simple vibrance boost - push channels apart
+                                        r = r0 + (r0 - l) * 0.5;
+                                        g = g0 + (g0 - l) * 0.5;
+                                        b = b0 + (b0 - l) * 0.5;
+
+                                        // Clamp
+                                        r = Math.min(1, Math.max(0, r));
+                                        g = Math.min(1, Math.max(0, g));
+                                        b = Math.min(1, Math.max(0, b));
+                                    } else {
+                                        r = r0; g = g0; b = b0;
+                                    }
                                 }
                                 // Add multiple points for denser, more visible ghost outline
                                 for (let p = 0; p < 3; p++) {
