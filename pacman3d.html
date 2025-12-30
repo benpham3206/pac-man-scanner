@@ -633,10 +633,11 @@
                                     existing.x = hit.object.position.x;
                                     existing.z = hit.object.position.z;
                                     existing.scared = data.scared;
+                                    existing.timestamp = Date.now(); // Update timestamp on re-scan
                                 } else {
                                     gameDataRef.current.scannedGhosts.push({
                                         index: data.index, x: hit.object.position.x, z: hit.object.position.z,
-                                        color: data.color, scared: data.scared
+                                        color: data.color, scared: data.scared, timestamp: Date.now()
                                     });
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
@@ -714,6 +715,19 @@
                     if (!checkCol(newPos)) {
                         camera.position.x = newPos.x;
                         camera.position.z = newPos.z;
+                    } else {
+                        // Wall sliding: try X and Z movement separately
+                        const tryX = camera.position.clone();
+                        tryX.x = newPos.x;
+                        if (!checkCol(tryX)) {
+                            camera.position.x = newPos.x;
+                        }
+
+                        const tryZ = camera.position.clone();
+                        tryZ.z = newPos.z;
+                        if (!checkCol(tryZ)) {
+                            camera.position.z = newPos.z;
+                        }
                     }
                     camera.position.y = 1.6;
                     camera.quaternion.setFromEuler(new THREE.Euler(state.pitch, state.yaw, 0, 'YXZ'));
@@ -846,7 +860,8 @@
                 };
             }, [gameState]);
 
-            const reset = () => {
+            // Go back to menu (full reset)
+            const goToMenu = () => {
                 setGameState('menu');
                 setScore(0);
                 setLives(3);
@@ -858,6 +873,23 @@
                     scannedCells: new Set(), scannedGhosts: [],
                     collectedPellets: new Set(), activeScanHits: [], isScanning: false
                 };
+            };
+
+            // Restart level (stay in game, reset state)
+            const restartLevel = () => {
+                setScore(0);
+                setLives(3);
+                setPelletsCollected(0);
+                setPointCount(0);
+                setScanMode('default');
+                gameDataRef.current = {
+                    playerPos: { x: 0, z: 0 }, playerRotation: 0,
+                    scannedCells: new Set(), scannedGhosts: [],
+                    collectedPellets: new Set(), activeScanHits: [], isScanning: false
+                };
+                // Force re-render by toggling game state
+                setGameState('menu');
+                setTimeout(() => setGameState('playing'), 10);
             };
 
             // Dynamic Minimap with distance-accurate scan lines
@@ -902,9 +934,9 @@
                             }
                         }
 
-                        // Player position
-                        const px = ((playerPos.x + maze[0].length * cellSize / 2) / cellSize) * cs;
-                        const py = ((playerPos.z + maze.length * cellSize / 2) / cellSize) * cs;
+                        // Player position (with +0.5 offset for cell centering)
+                        const px = ((playerPos.x + maze[0].length * cellSize / 2) / cellSize + 0.5) * cs;
+                        const py = ((playerPos.z + maze.length * cellSize / 2) / cellSize + 0.5) * cs;
 
                         // Draw scan line ONLY when actively scanning - shows farthest distance
                         if (isScanning && activeScanHits.length > 0) {
@@ -938,12 +970,16 @@
                             }
                         }
 
-                        // Scanned ghosts - blink at last known position
-                        const blinkAlpha = 0.5 + Math.sin(Date.now() * 0.008) * 0.5;
-                        scannedGhosts.forEach(ghost => {
-                            const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize) * cs;
-                            const gy = ((ghost.z + maze.length * cellSize / 2) / cellSize) * cs;
+                        // Scanned ghosts - blink and fade after 10s
+                        const GHOST_FADE_TIME = 10000; // 10 seconds
+                        const now = Date.now();
+                        scannedGhosts.filter(ghost => now - ghost.timestamp < GHOST_FADE_TIME).forEach(ghost => {
+                            const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize + 0.5) * cs;
+                            const gy = ((ghost.z + maze.length * cellSize / 2) / cellSize + 0.5) * cs;
                             const color = ghost.scared ? '51, 102, 255' : `${(ghost.color >> 16) & 255}, ${(ghost.color >> 8) & 255}, ${ghost.color & 255}`;
+                            const age = now - ghost.timestamp;
+                            const fadeAlpha = Math.max(0, 1 - age / GHOST_FADE_TIME); // Fade from 1 to 0
+                            const blinkAlpha = (0.5 + Math.sin(Date.now() * 0.008) * 0.5) * fadeAlpha;
                             ctx.fillStyle = `rgba(${color}, ${blinkAlpha})`;
                             ctx.beginPath();
                             ctx.arc(gx, gy, 3.5, 0, Math.PI * 2);
@@ -987,7 +1023,7 @@
                     </div>
                     <div className="pellets-text">{pelletsCollected} / {totalPellets}</div>
                     <div className="points-text">{pointCount.toLocaleString()} pts</div>
-                    <button onClick={reset} style={{
+                    <button onClick={restartLevel} style={{
                         marginTop: '0.5rem', background: 'transparent', border: '1px solid #444',
                         color: '#666', padding: '0.3rem 0.6rem', fontSize: '0.6rem', cursor: 'pointer',
                         borderRadius: '3px', letterSpacing: '0.1em'
@@ -1021,7 +1057,7 @@
                     const cs = 22; // Larger scale
 
                     const draw = () => {
-                        const { playerPos, playerRotation, scannedCells, scannedGhosts, collectedPellets } = gameDataRef.current;
+                        const { playerPos, playerRotation, scannedCells, scannedGhosts, collectedPellets, activeScanHits, isScanning } = gameDataRef.current;
 
                         ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1050,25 +1086,58 @@
                             }
                         }
 
-                        // Ghosts
-                        const blinkAlpha = 0.5 + Math.sin(Date.now() * 0.008) * 0.5;
-                        scannedGhosts.forEach(ghost => {
-                            const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize) * cs;
-                            const gy = ((ghost.z + maze.length * cellSize / 2) / cellSize) * cs;
+                        // Ghosts - fade after 10s
+                        const GHOST_FADE_TIME = 10000;
+                        const now = Date.now();
+                        scannedGhosts.filter(ghost => now - ghost.timestamp < GHOST_FADE_TIME).forEach(ghost => {
+                            const gx = ((ghost.x + maze[0].length * cellSize / 2) / cellSize + 0.5) * cs;
+                            const gy = ((ghost.z + maze.length * cellSize / 2) / cellSize + 0.5) * cs;
                             const color = ghost.scared ? '51, 102, 255' : `${(ghost.color >> 16) & 255}, ${(ghost.color >> 8) & 255}, ${ghost.color & 255}`;
+                            const age = now - ghost.timestamp;
+                            const fadeAlpha = Math.max(0, 1 - age / GHOST_FADE_TIME);
+                            const blinkAlpha = (0.5 + Math.sin(Date.now() * 0.008) * 0.5) * fadeAlpha;
                             ctx.fillStyle = `rgba(${color}, ${blinkAlpha})`;
                             ctx.beginPath();
                             ctx.arc(gx, gy, 8, 0, Math.PI * 2);
                             ctx.fill();
                         });
 
-                        // Player
-                        const px = ((playerPos.x + maze[0].length * cellSize / 2) / cellSize) * cs;
-                        const py = ((playerPos.z + maze.length * cellSize / 2) / cellSize) * cs;
+                        // Player (with offset)
+                        const px = ((playerPos.x + maze[0].length * cellSize / 2) / cellSize + 0.5) * cs;
+                        const py = ((playerPos.z + maze.length * cellSize / 2) / cellSize + 0.5) * cs;
                         ctx.fillStyle = '#fff';
                         ctx.beginPath();
                         ctx.arc(px, py, 6, 0, Math.PI * 2);
                         ctx.fill();
+
+                        // Draw scan line when actively scanning
+                        if (isScanning && activeScanHits.length > 0) {
+                            let farthestDist = 0;
+                            let farthestHit = null;
+                            activeScanHits.forEach(hit => {
+                                if (hit.dist > farthestDist) {
+                                    farthestDist = hit.dist;
+                                    farthestHit = hit;
+                                }
+                            });
+
+                            if (farthestHit) {
+                                const hx = ((farthestHit.x + maze[0].length * cellSize / 2) / cellSize + 0.5) * cs;
+                                const hy = ((farthestHit.z + maze.length * cellSize / 2) / cellSize + 0.5) * cs;
+
+                                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                                ctx.lineWidth = 2;
+                                ctx.beginPath();
+                                ctx.moveTo(px, py);
+                                ctx.lineTo(hx, hy);
+                                ctx.stroke();
+
+                                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                                ctx.beginPath();
+                                ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                        }
 
                         // Direction
                         ctx.strokeStyle = 'rgba(255,255,255,0.7)';
@@ -1116,7 +1185,7 @@
                             }}>BEGIN</button>
                             <div style={{ marginTop: '3rem', color: '#444', fontSize: '0.7rem', lineHeight: 2 }}>
                                 <p><span style={{ color: '#777' }}>LMB</span> — Scan</p>
-                                <p><span style={{ color: '#777' }}>Q</span> Default  <span style={{ color: '#777' }}>E</span> Point  <span style={{ color: '#777' }}>R</span> Spiral  <span style={{ color: '#777' }}>T</span> Line</p>
+                                <p><span style={{ color: '#777' }}>Q</span> Default  <span style={{ color: '#777' }}>E</span> Beam  <span style={{ color: '#777' }}>R</span> Spiral  <span style={{ color: '#777' }}>T</span> Line</p>
                             </div>
                         </div>
                     </div>
@@ -1130,10 +1199,14 @@
                             <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', color: '#ff4444', marginBottom: '2rem' }}>TERMINATED</div>
                             <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
                             <p style={{ fontSize: '1.8rem', fontFamily: 'monospace', marginBottom: '2rem' }}>{score}</p>
-                            <button onClick={reset} style={{
+                            <button onClick={goToMenu} style={{
+                                background: 'transparent', border: '1px solid #555', color: '#fff',
+                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em', marginRight: '1rem'
+                            }}>RETURN TO MENU</button>
+                            <button onClick={restartLevel} style={{
                                 background: 'transparent', border: '1px solid #555', color: '#fff',
                                 padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em'
-                            }}>RETRY</button>
+                            }}>RESTART</button>
                         </div>
                     </div>
                 );
@@ -1146,7 +1219,11 @@
                             <div style={{ fontSize: '1.8rem', fontWeight: '200', letterSpacing: '0.5em', marginBottom: '2rem' }}>COMPLETE</div>
                             <p style={{ color: '#555', marginBottom: '0.5rem' }}>Score</p>
                             <p style={{ fontSize: '1.8rem', fontFamily: 'monospace', marginBottom: '2rem' }}>{score}</p>
-                            <button onClick={reset} style={{
+                            <button onClick={goToMenu} style={{
+                                background: 'transparent', border: '1px solid #555', color: '#fff',
+                                padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em', marginRight: '1rem'
+                            }}>RETURN TO MENU</button>
+                            <button onClick={restartLevel} style={{
                                 background: 'transparent', border: '1px solid #555', color: '#fff',
                                 padding: '0.8rem 2.5rem', cursor: 'pointer', letterSpacing: '0.2em'
                             }}>RESTART</button>
