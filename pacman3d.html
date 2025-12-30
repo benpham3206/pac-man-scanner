@@ -345,8 +345,7 @@
 
                 // Point cloud - permanent wall/pellet points, fading ghost points
                 const wallPoints = []; // Permanent (walls + pellets)
-                const pelletPoints = []; // Legacy - kept for compatibility
-                const ghostPoints = []; // Fade after 10s
+                const ghostPoints = []; // Fade after 5s
                 const pointGeometry = new THREE.BufferGeometry();
                 const pointMaterial = new THREE.PointsMaterial({
                     size: 3,
@@ -624,14 +623,27 @@
                             const pz = hit.point.z + (Math.random() - 0.5) * noise;
 
                             if (data.type === 'ghost') {
-                                const c = data.color;
-                                ghostPoints.push({
-                                    x: px, y: py, z: pz,
-                                    r: ((c >> 16) & 255) / 255,
-                                    g: ((c >> 8) & 255) / 255,
-                                    b: (c & 255) / 255,
-                                    life: GHOST_FADE_TIME // Ghosts fade
-                                });
+                                // Brighter ghost colors - scared = blue, normal = boosted original
+                                let r, g, b;
+                                if (data.scared) {
+                                    r = 0.3; g = 0.5; b = 1.0; // Bright blue when scared
+                                } else {
+                                    const c = data.color;
+                                    r = Math.min(1, ((c >> 16) & 255) / 255 * 1.5);
+                                    g = Math.min(1, ((c >> 8) & 255) / 255 * 1.5);
+                                    b = Math.min(1, (c & 255) / 255 * 1.5);
+                                }
+                                // Add multiple points for denser, more visible ghost outline
+                                for (let p = 0; p < 3; p++) {
+                                    const offset = 0.03;
+                                    ghostPoints.push({
+                                        x: px + (Math.random() - 0.5) * offset,
+                                        y: py + (Math.random() - 0.5) * offset,
+                                        z: pz + (Math.random() - 0.5) * offset,
+                                        r, g, b,
+                                        life: GHOST_FADE_TIME
+                                    });
+                                }
                                 // Update ghost position for minimap
                                 const existing = gameDataRef.current.scannedGhosts.find(g => g.index === data.index);
                                 if (existing) {
@@ -684,19 +696,9 @@
                         }
                     }
 
-                    // Clean up legacy pelletPoints
-                    for (let i = pelletPoints.length - 1; i >= 0; i--) {
-                        pelletPoints[i].life--;
-                        if (pelletPoints[i].life <= 0 ||
-                            gameDataRef.current.collectedPellets.has(pelletPoints[i].pelletId)) {
-                            pelletPoints.splice(i, 1);
-                            geometryDirty = true;
-                        }
-                    }
-
                     if (!geometryDirty) return;
 
-                    const allPoints = [...wallPoints, ...pelletPoints, ...ghostPoints];
+                    const allPoints = [...wallPoints, ...ghostPoints];
                     if (allPoints.length === 0) return;
 
                     const pos = new Float32Array(allPoints.length * 3);
