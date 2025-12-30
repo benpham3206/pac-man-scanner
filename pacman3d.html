@@ -429,7 +429,7 @@
 
                 ghostSpawns.forEach((pos, i) => {
                     const ghost = new THREE.Mesh(
-                        new THREE.CapsuleGeometry(0.4, 0.8, 4, 8), // Original compact capsule shape
+                        new THREE.CapsuleGeometry(0.4, 0.8, 4, 8), // Compact capsule
                         new THREE.MeshBasicMaterial({ visible: false })
                     );
                     ghost.position.set(pos.x, 1.2, pos.z);
@@ -620,50 +620,68 @@
                                 if (Math.random() < 0.75) {
                                     const geom = target.geometry;
                                     const radius = (geom.parameters.radius || 0.4);
-                                    const height = (geom.parameters.height || (radius * 2));
+                                    const height = (geom.parameters.length || (radius * 2));
+                                    const isGhost = target.userData.type === 'ghost';
                                     const data = target.userData;
 
-                                    let gr, gg, gb;
-                                    if (data.type === 'ghost') {
+                                    // Pre-calculate color for this batch
+                                    let r, g, b;
+                                    if (isGhost) {
                                         if (data.scared) {
-                                            gr = 0.3; gg = 0.5; gb = 1.0;
+                                            r = 0.3; g = 0.5; b = 1.0;
                                         } else {
                                             const c = data.color;
                                             let r0 = ((c >> 16) & 255) / 255;
                                             let g0 = ((c >> 8) & 255) / 255;
                                             let b0 = (c & 255) / 255;
-                                            const l = (Math.max(r0, g0, b0) + Math.min(r0, g0, b0)) / 2;
-                                            gr = Math.min(1, Math.max(0, r0 + (r0 - l) * 0.5));
-                                            gg = Math.min(1, Math.max(0, g0 + (g0 - l) * 0.5));
-                                            gb = Math.min(1, Math.max(0, b0 + (b0 - l) * 0.5));
+                                            // Saturation boost logic inline
+                                            const max = Math.max(r0, g0, b0);
+                                            const min = Math.min(r0, g0, b0);
+                                            const l = (max + min) / 2;
+                                            if (max !== min) {
+                                                const d = max - min;
+                                                const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                                                // 50% saturation boost
+                                                r = r0 + (r0 - l) * 0.5;
+                                                g = g0 + (g0 - l) * 0.5;
+                                                b = b0 + (b0 - l) * 0.5;
+                                                r = Math.min(1, Math.max(0, r));
+                                                g = Math.min(1, Math.max(0, g));
+                                                b = Math.min(1, Math.max(0, b));
+                                            } else {
+                                                r = r0; g = g0; b = b0;
+                                            }
                                         }
+                                    } else {
+                                        // Pellet color
+                                        r = 1; g = data.isPower ? 0.2 : 1; b = data.isPower ? 0.2 : 0.1;
                                     }
 
                                     for (let i = 0; i < 10; i++) {
                                         const p = target.position.clone().add(new THREE.Vector3(
                                             (Math.random() - 0.5) * radius * 2.2,
-                                            (Math.random() - 0.5) * height * 1.2,
+                                            (Math.random() - 0.5) * height * 1.2, // Slight over-volume
                                             (Math.random() - 0.5) * radius * 2.2
                                         ));
 
+                                        // Push to Map
                                         scanHits.push({ point: p, object: target, distance: dist });
 
-                                        if (data.type === 'ghost') {
+                                        // Push to 3D View
+                                        if (isGhost) {
                                             ghostPoints.push({
                                                 x: p.x, y: p.y, z: p.z,
-                                                r: gr, g: gg, b: gb,
+                                                r, g, b,
                                                 life: GHOST_FADE_TIME
                                             });
-                                        } else if (data.type === 'pellet') {
+                                        } else {
                                             wallPoints.push({
                                                 x: p.x, y: p.y, z: p.z,
-                                                r: 1, g: data.isPower ? 0.2 : 1, b: data.isPower ? 0.2 : 0.1,
+                                                r, g, b,
                                                 pelletId: data.id
                                             });
                                         }
                                     }
-                                    const g = toGrid(target.position.x, target.position.z);
-                                    gameDataRef.current.scannedCells.add(`${g.row}-${g.col}`);
                                 }
                             }
                         }
