@@ -339,28 +339,62 @@
                     activeSpirals: [0], // Array of active spiral time offsets
                     activeBeams: [0], // Array of active sonar beam time offsets
                     lineHorizontal: true, // Toggle for line scan orientation
+                    sweepT: 0, // 0 to 1 for sweeping lines
+                    sweepDir: 1,
                     score: 0,
                     lives: 3,
                     pelletsCollected: 0
                 };
 
-                // Point cloud - permanent wall/pellet points, fading ghost points
-                const wallPoints = []; // Permanent (walls + pellets)
-                const ghostPoints = []; // Fade after 5s
+                // OPTIMIZATION: Ring Buffer for permanent points (Walls/Pellets)
+                // Eliminates garbage collection and array resizing
+                const MAX_POINTS = 500000;
+                const pointPositions = new Float32Array(MAX_POINTS * 3);
+                const pointColors = new Float32Array(MAX_POINTS * 3);
+                let pointHead = 0; // Current write index
+                let pointCount = 0; // Total points (up to MAX)
+
                 const pointGeometry = new THREE.BufferGeometry();
+                pointGeometry.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3));
+                pointGeometry.setAttribute('color', new THREE.BufferAttribute(pointColors, 3));
+                // Initial draw range 0
+                pointGeometry.setDrawRange(0, 0);
+
                 const pointMaterial = new THREE.PointsMaterial({
-                    size: 1.5, // Even smaller points for finer detail
+                    size: 3, // Reverted to original larger size
                     vertexColors: true,
                     sizeAttenuation: false
                 });
                 const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
-                pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
+                pointCloud.frustumCulled = false;
                 scene.add(pointCloud);
 
-                const GHOST_FADE_TIME = 300; // 5 seconds (in frames at 60fps)
-                const PELLET_FADE_TIME = 180; // 3 seconds for collected pellets to fade
-                let geometryDirty = false;
+                // Ghost points remain separate as they need to fade/remove individually
+                const ghostPoints = [];
+                let ghostGeometryDirty = false;
+                const ghostPointGeometry = new THREE.BufferGeometry();
+                const ghostPointCloud = new THREE.Points(ghostPointGeometry, pointMaterial);
+                scene.add(ghostPointCloud);
 
+                const addWallPoint = (x, y, z, r, g, b) => {
+                    const idx = pointHead * 3;
+                    pointPositions[idx] = x;
+                    pointPositions[idx + 1] = y;
+                    pointPositions[idx + 2] = z;
+                    pointColors[idx] = r;
+                    pointColors[idx + 1] = g;
+                    pointColors[idx + 2] = b;
+
+                    pointHead = (pointHead + 1) % MAX_POINTS;
+                    if (pointCount < MAX_POINTS) pointCount++;
+
+                    // Optimization: Flag update range? 
+                    // For simplicity, we assume we update the buffer range in render loop
+                    // But strictly we should set needsUpdate.
+                };
+
+                const GHOST_FADE_TIME = 300;
+                const PELLET_FADE_TIME = 180;
                 const colliders = [];
                 const pelletMeshes = [];
                 let pelletCount = 0;
@@ -563,14 +597,23 @@
                     };
 
                     if (state.scanMode === 'default') {
-                        // Default: Cover 1.5x Maze Height area
-                        // Fixed "Wide" scatter roughly equivalent to 1.5x wall height at mid-range (6m)
-                        // At 6m, 1.5*3 = 4.5m height -> atan(4.5/6) ~= 0.64 rad (~36 deg) half-angle
-                        // We'll use a spread of ~0.7 rad for height, slightly less for width
+                        // 360 Scan: Random Spherical Distribution
                         for (let i = 0; i < 45; i++) {
-                            const hOff = (Math.random() - 0.5) * 1.2; // ~68 deg spread
-                            const vOff = (Math.random() - 0.5) * 1.4; // ~80 deg spread (Vertical emphasis)
-                            dirs.push(getDir(hOff, vOff));
+                            // Uniform sphere point
+                            const theta = Math.random() * Math.PI * 2;
+                            const phi = Math.acos(2 * Math.random() - 1);
+
+                            // Convert to Cartesian
+                            const x = Math.sin(phi) * Math.cos(theta);
+                            const y = Math.sin(phi) * Math.sin(theta);
+                            const z = Math.cos(phi);
+
+                            // Note: getDir applies rotation, but for 360 we just need world space random?
+                            // Actually, let's keep it relative to camera just in case we change it later, 
+                            // but 360 is rotation invariant. getDir adds camera rotation.
+                            // If we want world-space 360, we don't need getDir/camera quaternion.
+                            // But usually players expect scans to emanate from them. 
+                            dirs.push(new THREE.Vector3(x, y, z));
                         }
                     } else if (state.scanMode === 'beam') {
                         // Sonar Pulse: Loops when finished reaching radius
@@ -613,12 +656,24 @@
                             }
                         }
                     } else if (state.scanMode === 'line') {
+                        // Sweeping Line Scan
+                        // Update Sweep State
+                        const sweepSpeed = 0.01;
+                        state.sweepT += state.sweepDir * sweepSpeed;
+                        if (state.sweepT > 1 || state.sweepT < 0) state.sweepDir *= -1;
+
+                        // Map T to Angle Range (-0.6 to 0.6 rads approx 35deg each way)
+                        const sweepAngle = (state.sweepT - 0.5) * 1.2;
+
                         for (let i = 0; i < 100; i++) {
-                            const offset = (i / 100 - 0.5) * Math.PI;
+                            const offset = (i / 100 - 0.5) * Math.PI; // Full 180 degrees
+
                             if (state.lineHorizontal) {
-                                dirs.push(getDir(offset, 0));
+                                // Horizontal Line (Horizon) sweeping Vertically (Pitch)
+                                dirs.push(getDir(offset, sweepAngle));
                             } else {
-                                dirs.push(getDir(0, offset));
+                                // Vertical Line (Meridian) sweeping Horizontally (Yaw)
+                                dirs.push(getDir(sweepAngle, offset));
                             }
                         }
                     } else if (state.scanMode === 'spiral') {
@@ -734,6 +789,7 @@
                                         life: GHOST_FADE_TIME
                                     });
                                 }
+                                ghostGeometryDirty = true;
                                 // Update ghost position for minimap
                                 const existing = gameDataRef.current.scannedGhosts.find(g => g.index === data.index);
                                 if (existing) {
@@ -747,71 +803,76 @@
                                         color: data.color, scared: data.scared, timestamp: Date.now()
                                     });
                                 }
-                            } else if (data.type === 'pellet' && !data.collected) {
-                                // Pellets: yellow normal, red power
-                                // Generate 5 points per scan hit for density
-                                for (let i = 0; i < 5; i++) {
-                                    const spread = 0.05;
-                                    wallPoints.push({
-                                        x: px + (Math.random() - 0.5) * spread,
-                                        y: py + (Math.random() - 0.5) * spread,
-                                        z: pz + (Math.random() - 0.5) * spread,
-                                        r: 1, g: data.isPower ? 0.2 : 1, b: data.isPower ? 0.2 : 0.1,
-                                        pelletId: data.id // Track for removal when collected
-                                    });
-                                }
                             } else {
-                                // Walls = white gradient
-                                const col = distColor(dist);
-                                wallPoints.push({ x: px, y: py, z: pz, r: col.r, g: col.g, b: col.b });
+                                // Wall/Pellet => Ring Buffer
+                                const isPellet = data.type === 'pellet';
+                                const isPower = data.isPower;
+                                if (dist < 34) {
+                                    if (isPellet && !data.collected) {
+                                        // High density for pellets
+                                        for (let i = 0; i < 5; i++) {
+                                            const spread = 0.05;
+                                            addWallPoint(
+                                                hits[0].point.x + (Math.random() - 0.5) * spread,
+                                                hits[0].point.y + (Math.random() - 0.5) * spread,
+                                                hits[0].point.z + (Math.random() - 0.5) * spread,
+                                                1, isPower ? 0.2 : 1, isPower ? 0.2 : 0.1
+                                            );
+                                        }
+                                    } else if (data.type === 'wall' || (isPellet && data.collected)) {
+                                        // Wall or collected pellet (still visible as wall)
+                                        const col = distColor(dist);
+                                        addWallPoint(hits[0].point.x, hits[0].point.y, hits[0].point.z, col.r, col.g, col.b);
+                                    }
+                                }
                             }
                         }
                     }
 
                     gameDataRef.current.activeScanHits = scanHits;
                     gameDataRef.current.isScanning = true;
-                    geometryDirty = true;
                 };
 
                 // Update points
                 const updatePoints = () => {
-                    // Fade ghost points (5 seconds)
+                    // 1. Permanent Wall Points (Ring Buffer)
+                    // We update the draw range to show all valid points
+                    pointGeometry.setDrawRange(0, pointCount);
+                    pointGeometry.attributes.position.needsUpdate = true;
+                    pointGeometry.attributes.color.needsUpdate = true;
+
+                    // 2. Ghost Points (Dynamic Fade)
+                    // Filter dead points
                     for (let i = ghostPoints.length - 1; i >= 0; i--) {
                         ghostPoints[i].life--;
                         if (ghostPoints[i].life <= 0) {
                             ghostPoints.splice(i, 1);
-                            geometryDirty = true;
+                            ghostGeometryDirty = true;
                         }
                     }
 
-                    // Remove collected pellet points from wallPoints
-                    for (let i = wallPoints.length - 1; i >= 0; i--) {
-                        if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
-                            wallPoints.splice(i, 1);
-                            geometryDirty = true;
-                        }
+                    // Rebuild ghost geometry if needed (or every frame if adding points)
+                    // Since this array is small (<5000 usually), full rebuild is acceptable
+                    if (ghostGeometryDirty || ghostPoints.length > 0) {
+                        const gp = new Float32Array(ghostPoints.length * 3);
+                        const gc = new Float32Array(ghostPoints.length * 3);
+                        ghostPoints.forEach((p, i) => {
+                            gp[i * 3] = p.x; gp[i * 3 + 1] = p.y; gp[i * 3 + 2] = p.z;
+                            // Fade logic
+                            const alpha = Math.min(1, p.life / 60);
+                            gc[i * 3] = p.r * alpha; gc[i * 3 + 1] = p.g * alpha; gc[i * 3 + 2] = p.b * alpha;
+                        });
+                        ghostPointGeometry.setAttribute('position', new THREE.BufferAttribute(gp, 3));
+                        ghostPointGeometry.setAttribute('color', new THREE.BufferAttribute(gc, 3));
+                        ghostPointGeometry.attributes.position.needsUpdate = true;
+                        ghostPointGeometry.attributes.color.needsUpdate = true;
+                        ghostPointGeometry.setDrawRange(0, ghostPoints.length);
+                        ghostGeometryDirty = false;
+                    } else {
+                        ghostPointGeometry.setDrawRange(0, 0);
                     }
 
-                    if (!geometryDirty) return;
-
-                    const allPoints = [...wallPoints, ...ghostPoints];
-                    if (allPoints.length === 0) return;
-
-                    const pos = new Float32Array(allPoints.length * 3);
-                    const col = new Float32Array(allPoints.length * 3);
-
-                    allPoints.forEach((p, i) => {
-                        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
-                        const alpha = p.life !== undefined ? Math.min(1, p.life / 150) : 1;
-                        col[i * 3] = p.r * alpha;
-                        col[i * 3 + 1] = p.g * alpha;
-                        col[i * 3 + 2] = p.b * alpha;
-                    });
-
-                    pointGeometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-                    pointGeometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
-                    geometryDirty = false;
-                    setPointCount(allPoints.length);
+                    setPointCount(pointCount + ghostPoints.length);
                 };
 
                 let time = 0;
