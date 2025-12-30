@@ -429,10 +429,10 @@
 
                 ghostSpawns.forEach((pos, i) => {
                     const ghost = new THREE.Mesh(
-                        new THREE.CapsuleGeometry(0.4, 0.8, 4, 8), // Compact capsule
+                        new THREE.SphereGeometry(0.7, 8, 8),
                         new THREE.MeshBasicMaterial({ visible: false })
                     );
-                    ghost.position.set(pos.x, 1.2, pos.z);
+                    ghost.position.set(pos.x, 0.7, pos.z);
                     ghost.userData = {
                         type: 'ghost',
                         index: i,
@@ -538,10 +538,18 @@
                     if (Math.random() < 0.15) playScanSound();
 
                     if (state.scanMode === 'default') {
-                        for (let i = 0; i < 45; i++) {
+                        for (let i = 0; i < 60; i++) { // Increased point count slightly
+                            // Center-biased distribution: sqaring the random factor clusters points near center
+                            const rh = (Math.random() - 0.5) * 2; // -1 to 1
+                            const rv = (Math.random() - 0.5) * 2; // -1 to 1
+
+                            // Cubic bias for strong center clustering
+                            const biasH = rh * rh * rh;
+                            const biasV = rv * rv * rv;
+
                             dirs.push({
-                                h: state.yaw + (Math.random() - 0.5) * Math.PI / 2.5,
-                                v: state.pitch + (Math.random() - 0.5) * Math.PI / 3.5
+                                h: state.yaw + biasH * (Math.PI / 2.5) * 0.5,
+                                v: state.pitch + biasV * (Math.PI / 3.5) * 0.5
                             });
                         }
                     } else if (state.scanMode === 'beam') {
@@ -596,96 +604,7 @@
 
 
 
-                    // Synthetic Scan: Automatically hit pellets/ghosts within FOV with 75% probability
-                    const targets = [...pelletMeshes, ...ghosts];
-                    const cameraDir = new THREE.Vector3();
-                    camera.getWorldDirection(cameraDir);
 
-                    targets.forEach(target => {
-                        if (target.userData.collected) return;
-
-                        // Check range
-                        const vecToTarget = new THREE.Vector3().subVectors(target.position, camera.position);
-                        const dist = vecToTarget.length();
-                        if (dist > 15) return;
-
-                        // Check FOV (~30 degrees)
-                        const angle = vecToTarget.clone().normalize().angleTo(cameraDir);
-                        if (angle < 0.5) {
-                            // Raycast to check line of sight
-                            const ray = new THREE.Raycaster(camera.position, vecToTarget.clone().normalize(), 0, dist + 0.5);
-                            const intersections = ray.intersectObjects(colliders, false);
-                            if (intersections.length > 0 && intersections[0].object === target) {
-                                // Visible! 75% chance to add points
-                                if (Math.random() < 0.75) {
-                                    const geom = target.geometry;
-                                    const radius = (geom.parameters.radius || 0.4);
-                                    const height = (geom.parameters.length || (radius * 2));
-                                    const isGhost = target.userData.type === 'ghost';
-                                    const data = target.userData;
-
-                                    // Pre-calculate color for this batch
-                                    let r, g, b;
-                                    if (isGhost) {
-                                        if (data.scared) {
-                                            r = 0.3; g = 0.5; b = 1.0;
-                                        } else {
-                                            const c = data.color;
-                                            let r0 = ((c >> 16) & 255) / 255;
-                                            let g0 = ((c >> 8) & 255) / 255;
-                                            let b0 = (c & 255) / 255;
-                                            // Saturation boost logic inline
-                                            const max = Math.max(r0, g0, b0);
-                                            const min = Math.min(r0, g0, b0);
-                                            const l = (max + min) / 2;
-                                            if (max !== min) {
-                                                const d = max - min;
-                                                const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-                                                // 50% saturation boost
-                                                r = r0 + (r0 - l) * 0.5;
-                                                g = g0 + (g0 - l) * 0.5;
-                                                b = b0 + (b0 - l) * 0.5;
-                                                r = Math.min(1, Math.max(0, r));
-                                                g = Math.min(1, Math.max(0, g));
-                                                b = Math.min(1, Math.max(0, b));
-                                            } else {
-                                                r = r0; g = g0; b = b0;
-                                            }
-                                        }
-                                    } else {
-                                        // Pellet color
-                                        r = 1; g = data.isPower ? 0.2 : 1; b = data.isPower ? 0.2 : 0.1;
-                                    }
-
-                                    for (let i = 0; i < 10; i++) {
-                                        const p = target.position.clone().add(new THREE.Vector3(
-                                            (Math.random() - 0.5) * radius * 2.2,
-                                            (Math.random() - 0.5) * height * 1.2, // Slight over-volume
-                                            (Math.random() - 0.5) * radius * 2.2
-                                        ));
-
-                                        // Push to Map
-                                        scanHits.push({ point: p, object: target, distance: dist });
-
-                                        // Push to 3D View
-                                        if (isGhost) {
-                                            ghostPoints.push({
-                                                x: p.x, y: p.y, z: p.z,
-                                                r, g, b,
-                                                life: GHOST_FADE_TIME
-                                            });
-                                        } else {
-                                            wallPoints.push({
-                                                x: p.x, y: p.y, z: p.z,
-                                                r, g, b,
-                                                pelletId: data.id
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
 
                     for (const d of dirs) {
                         const dir = new THREE.Vector3(0, 0, -1);
