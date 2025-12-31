@@ -348,9 +348,9 @@
                 const ghostPoints = []; // Fade after 5s
                 const pointGeometry = new THREE.BufferGeometry();
                 const pointMaterial = new THREE.PointsMaterial({
-                    size: 3.0,
+                    size: 0.0067,
                     vertexColors: true,
-                    sizeAttenuation: false
+                    sizeAttenuation: true
                 });
                 const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
                 pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
@@ -544,7 +544,7 @@
                         const hFOV = 2 * Math.atan(Math.tan(vFOV / 2) * aspect);
 
                         // Scatter within visible screen bounds
-                        for (let i = 0; i < 65; i++) {
+                        for (let i = 0; i < 200; i++) {
                             dirs.push({
                                 h: state.yaw + (Math.random() - 0.5) * hFOV,
                                 v: state.pitch + (Math.random() - 0.5) * vFOV
@@ -553,7 +553,7 @@
                     } else if (state.scanMode === 'beam') {
                         // Simplified flashlight beam - fewer points for performance
                         const maxAngle = 0.1;
-                        const pointCount = 25; // Reduced from ~100 to 25
+                        const pointCount = 80; // Increased from 40
 
                         // Center point
                         dirs.push({ h: state.yaw, v: state.pitch });
@@ -569,9 +569,8 @@
                         }
                     } else if (state.scanMode === 'line') {
                         // Line scan - toggle between horizontal and vertical with T
-                        // Line scan - toggle between horizontal and vertical with T
-                        for (let i = 0; i < 150; i++) {
-                            const offset = (i / 150 - 0.5) * Math.PI; // Full 180 degrees
+                        for (let i = 0; i < 300; i++) {
+                            const offset = (i / 300 - 0.5) * Math.PI; // Full 180 degrees
                             if (state.lineHorizontal) {
                                 dirs.push({ h: state.yaw + offset, v: state.pitch });
                             } else {
@@ -582,7 +581,7 @@
                         // Archimedes spiral: r = a + b*theta
                         const a = 0.001;
                         const b = 0.015;
-                        const pointsPerFrame = 25;
+                        const pointsPerFrame = 80;
                         const maxTheta = 40;
                         const spawnThreshold = maxTheta * 0.75; // Loop at 75%
 
@@ -640,10 +639,9 @@
                                 gameDataRef.current.scannedCells.add(`${data.row}-${data.col}`);
                             }
 
-                            const noise = 0.012;
-                            const px = hit.point.x + (Math.random() - 0.5) * noise;
-                            const py = hit.point.y + (Math.random() - 0.5) * noise;
-                            const pz = hit.point.z + (Math.random() - 0.5) * noise;
+                            const px = hit.point.x;
+                            const py = hit.point.y;
+                            const pz = hit.point.z;
 
                             if (data.type === 'ghost') {
                                 // Brighter ghost colors - scared = blue, normal = boosted original
@@ -656,9 +654,9 @@
                                     g = Math.min(1, ((c >> 8) & 255) / 255 * 1.5);
                                     b = Math.min(1, (c & 255) / 255 * 1.5);
                                 }
-                                // BOOST: Add 2 points per hit (2x Speed) with wider spread
-                                for (let p = 0; p < 2; p++) {
-                                    const offset = 0.12; // Wider spread to avoid clumping
+                                // DENSITY BOOST: 20 points per hit to create "Solid Ball" effect
+                                for (let p = 0; p < 20; p++) {
+                                    const offset = 0.25; // Large spread to fill the ghost volume
                                     ghostPoints.push({
                                         x: px + (Math.random() - 0.5) * offset,
                                         y: py + (Math.random() - 0.5) * offset,
@@ -667,7 +665,7 @@
                                         life: GHOST_FADE_TIME
                                     });
                                 }
-                                // Update ghost position for minimap... (existing logic skipped for brevity if not changing)
+                                // Update ghost position for minimap logic... (kept consistent)
                                 const existing = gameDataRef.current.scannedGhosts.find(g => g.index === data.index);
                                 if (existing) {
                                     existing.x = hit.object.position.x;
@@ -681,9 +679,9 @@
                                     });
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
-                                // BOOST: Add 2 points per hit (2x Speed)
-                                for (let p = 0; p < 2; p++) {
-                                    const offset = 0.1; // Spread out the points
+                                // DENSITY BOOST: 20 points per hit for Solid Glow
+                                for (let p = 0; p < 20; p++) {
+                                    const offset = 0.12;
                                     wallPoints.push({
                                         x: px + (Math.random() - 0.5) * offset,
                                         y: py + (Math.random() - 0.5) * offset,
@@ -718,12 +716,15 @@
                         }
                     }
 
-                    // Remove collected pellet points from wallPoints
-                    for (let i = wallPoints.length - 1; i >= 0; i--) {
-                        if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
-                            wallPoints.splice(i, 1);
-                            geometryDirty = true;
+                    // OPTIMIZATION: Only check for pellet removal if flag is set
+                    if (gameDataRef.current.scannedPelletsDirty) {
+                        for (let i = wallPoints.length - 1; i >= 0; i--) {
+                            if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
+                                wallPoints.splice(i, 1);
+                                geometryDirty = true;
+                            }
                         }
+                        gameDataRef.current.scannedPelletsDirty = false;
                     }
 
                     if (!geometryDirty) return;
@@ -731,6 +732,7 @@
                     const allPoints = [...wallPoints, ...ghostPoints];
                     if (allPoints.length === 0) return;
 
+                    // Rebuild geometry
                     const pos = new Float32Array(allPoints.length * 3);
                     const col = new Float32Array(allPoints.length * 3);
 
@@ -808,6 +810,7 @@
                                 setScore(state.score);
                                 setPelletsCollected(state.pelletsCollected);
                                 gameDataRef.current.collectedPellets.add(p.userData.id);
+                                gameDataRef.current.scannedPelletsDirty = true; // Trigger point cleanup
 
                                 const idx = colliders.indexOf(p);
                                 if (idx > -1) colliders.splice(idx, 1);

@@ -7,10 +7,15 @@ A Scanner Sombre-inspired reimagining of the classic PAC-MAN arcade game. Naviga
 ## 🎮 Features
 
 ### Core Gameplay
-- **LIDAR Scanning**: Hold left mouse button to scan and reveal the environment
-- **Pellet Collection**: Find and collect all pellets to win
-- **Ghost Avoidance**: Avoid ghosts or eat them when powered up
-- **Power Pellets**: Large pellets that let you eat ghosts temporarily
+- **LIDAR Scanner**: 
+  - **4 Modes**: Default (Fullscreen Scatter), Beam (Focused Cone), Line (Sweeping Plane), Spiral (Tunneling).
+  - **High-Fidelity Visuals**: 
+    - Objects (Pellets/Ghosts) scan with **20x density**, creating solid, glowing forms.
+    - Walls scan with a "sparse" aesthetic (20% fill rate) to differentiate them from interactive objects.
+  - **Optimized Performance**: Ring-buffer rendering and smart culling for 60FPS.
+- **Classic Gameplay**: 
+  - **AI Ghosts**: Simple tracking behaviors that hunt the player.
+  - **Power Pellets**: Turn the tables on ghosts. let you eat ghosts temporarily
 
 ### Scan Modes
 | Key | Mode | Description |
