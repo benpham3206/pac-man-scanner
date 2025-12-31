@@ -329,7 +329,7 @@
                 };
 
                 const state = {
-                    moveSpeed: 0.055,
+                    moveSpeed: 0.06,
                     mouseSens: 0.002,
                     keys: {},
                     yaw: 0,
@@ -346,22 +346,14 @@
                 // Point cloud - permanent wall/pellet points, fading ghost points
                 const wallPoints = []; // Permanent (walls + pellets)
                 const ghostPoints = []; // Fade after 5s
-                // Optimization: Pre-allocated Fixed Buffer
-                const MAX_POINTS = 500000;
                 const pointGeometry = new THREE.BufferGeometry();
-                const posBuffer = new Float32Array(MAX_POINTS * 3);
-                const colBuffer = new Float32Array(MAX_POINTS * 3);
-                pointGeometry.setAttribute('position', new THREE.BufferAttribute(posBuffer, 3));
-                pointGeometry.setAttribute('color', new THREE.BufferAttribute(colBuffer, 3));
-                pointGeometry.setDrawRange(0, 0);
-
                 const pointMaterial = new THREE.PointsMaterial({
-                    size: 0.15,
+                    size: 3.0,
                     vertexColors: true,
-                    sizeAttenuation: true
+                    sizeAttenuation: false
                 });
                 const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
-                pointCloud.frustumCulled = false;
+                pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
                 scene.add(pointCloud);
 
                 const GHOST_FADE_TIME = 300; // 5 seconds (in frames at 60fps)
@@ -664,9 +656,9 @@
                                     g = Math.min(1, ((c >> 8) & 255) / 255 * 1.5);
                                     b = Math.min(1, (c & 255) / 255 * 1.5);
                                 }
-                                // BOOST: Add 5 points per hit for Ghosts (Super Fast Scan)
-                                for (let p = 0; p < 5; p++) {
-                                    const offset = 0.04;
+                                // BOOST: Add 2 points per hit (2x Speed) with wider spread
+                                for (let p = 0; p < 2; p++) {
+                                    const offset = 0.12; // Wider spread to avoid clumping
                                     ghostPoints.push({
                                         x: px + (Math.random() - 0.5) * offset,
                                         y: py + (Math.random() - 0.5) * offset,
@@ -689,9 +681,9 @@
                                     });
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
-                                // BOOST: Add 5 points per hit for Pellets (Super Fast Scan)
-                                for (let p = 0; p < 5; p++) {
-                                    const offset = 0.03;
+                                // BOOST: Add 2 points per hit (2x Speed)
+                                for (let p = 0; p < 2; p++) {
+                                    const offset = 0.1; // Spread out the points
                                     wallPoints.push({
                                         x: px + (Math.random() - 0.5) * offset,
                                         y: py + (Math.random() - 0.5) * offset,
@@ -716,70 +708,44 @@
                 };
 
                 // Update points
-                // Update points
-                let lastPointUpdate = 0;
                 const updatePoints = () => {
-                    const now = Date.now();
-                    let needsUpdate = geometryDirty;
-
-                    // Fade ghosts
+                    // Fade ghost points (5 seconds)
                     for (let i = ghostPoints.length - 1; i >= 0; i--) {
                         ghostPoints[i].life--;
                         if (ghostPoints[i].life <= 0) {
                             ghostPoints.splice(i, 1);
-                            needsUpdate = true;
-                        }
-                    }
-                    if (gameDataRef.current.collectedPellets.size > 0 && wallPoints.some(w => w.pelletId && gameDataRef.current.collectedPellets.has(w.pelletId))) {
-                        // Cleanup collected pellets
-                        for (let i = wallPoints.length - 1; i >= 0; i--) {
-                            if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
-                                wallPoints.splice(i, 1);
-                                needsUpdate = true;
-                            }
+                            geometryDirty = true;
                         }
                     }
 
-                    if (!needsUpdate) return;
-                    if (wallPoints.length + ghostPoints.length >= MAX_POINTS) return; // Safety cap
-
-                    const positions = pointGeometry.attributes.position.array;
-                    const colors = pointGeometry.attributes.color.array;
-                    let idx = 0;
-
-                    // FAST COPY: Wall Points
-                    for (let i = 0; i < wallPoints.length; i++) {
-                        positions[idx] = wallPoints[i].x;
-                        positions[idx + 1] = wallPoints[i].y;
-                        positions[idx + 2] = wallPoints[i].z;
-                        colors[idx] = wallPoints[i].r;
-                        colors[idx + 1] = wallPoints[i].g;
-                        colors[idx + 2] = wallPoints[i].b;
-                        idx += 3;
+                    // Remove collected pellet points from wallPoints
+                    for (let i = wallPoints.length - 1; i >= 0; i--) {
+                        if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
+                            wallPoints.splice(i, 1);
+                            geometryDirty = true;
+                        }
                     }
 
-                    // FAST COPY: Ghost Points
-                    for (let i = 0; i < ghostPoints.length; i++) {
-                        positions[idx] = ghostPoints[i].x;
-                        positions[idx + 1] = ghostPoints[i].y;
-                        positions[idx + 2] = ghostPoints[i].z;
-                        const alpha = Math.min(1, ghostPoints[i].life / 150);
-                        colors[idx] = ghostPoints[i].r * alpha;
-                        colors[idx + 1] = ghostPoints[i].g * alpha;
-                        colors[idx + 2] = ghostPoints[i].b * alpha;
-                        idx += 3;
-                    }
+                    if (!geometryDirty) return;
 
-                    pointGeometry.setDrawRange(0, idx / 3);
-                    pointGeometry.attributes.position.needsUpdate = true;
-                    pointGeometry.attributes.color.needsUpdate = true;
+                    const allPoints = [...wallPoints, ...ghostPoints];
+                    if (allPoints.length === 0) return;
+
+                    const pos = new Float32Array(allPoints.length * 3);
+                    const col = new Float32Array(allPoints.length * 3);
+
+                    allPoints.forEach((p, i) => {
+                        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+                        const alpha = p.life !== undefined ? Math.min(1, p.life / 150) : 1;
+                        col[i * 3] = p.r * alpha;
+                        col[i * 3 + 1] = p.g * alpha;
+                        col[i * 3 + 2] = p.b * alpha;
+                    });
+
+                    pointGeometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+                    pointGeometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
                     geometryDirty = false;
-
-                    // Throttle React State Updates
-                    if (now - lastPointUpdate > 500) {
-                        setPointCount(idx / 3);
-                        lastPointUpdate = now;
-                    }
+                    setPointCount(allPoints.length);
                 };
 
                 let time = 0;
