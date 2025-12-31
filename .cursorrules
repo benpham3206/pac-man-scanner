@@ -1,6 +1,0 @@
-# Antigravity Agent Rules
-
-## Git Workflow
-- **ALWAYS** recommend creating a NEW BRANCH for any new feature, experimental change, or major refactor.
-- **NEVER** commit directly to `main` for non-trivial changes without asking first.
-- **Command**: `git checkout -b <feature-branch-name>`
