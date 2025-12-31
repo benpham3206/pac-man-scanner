@@ -328,6 +328,8 @@
                     }
                 };
 
+
+
                 const state = {
                     moveSpeed: 0.06,
                     mouseSens: 0.002,
@@ -343,21 +345,99 @@
                     pelletsCollected: 0
                 };
 
-                // Point cloud - permanent wall/pellet points, fading ghost points
-                const wallPoints = []; // Permanent (walls + pellets)
-                const ghostPoints = []; // Fade after 5s
+                // Point cloud - permanent wall points, map for pellets (O(1) removal), fading ghost points
+                const wallPoints = [];
+                const pelletPointsMap = new Map(); // ID -> Array of points
+                const ghostPoints = [];
+
+                // DYNAMIC BUFFER: Starts large, grows automatically (No Limit)
+                let currentBufferSize = 500000;
                 const pointGeometry = new THREE.BufferGeometry();
+                let positions = new Float32Array(currentBufferSize * 3);
+                let colors = new Float32Array(currentBufferSize * 3);
+
+                pointGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+                pointGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
+
                 const pointMaterial = new THREE.PointsMaterial({
-                    size: 0.0067,
+                    size: 0.001, // Adjusted for World Units (Attenuation ON)
                     vertexColors: true,
                     sizeAttenuation: true
                 });
                 const pointCloud = new THREE.Points(pointGeometry, pointMaterial);
-                pointCloud.frustumCulled = false; // Prevent points from disappearing when camera moves
+                pointCloud.frustumCulled = false;
                 scene.add(pointCloud);
 
-                const GHOST_FADE_TIME = 300; // 5 seconds (in frames at 60fps)
-                const PELLET_FADE_TIME = 180; // 3 seconds for collected pellets to fade
+                const GHOST_FADE_TIME = 300;
+                const PELLET_FADE_TIME = 180;
+
+                // Update points
+                const updatePoints = () => {
+                    let dirty = false;
+
+                    // Fade ghost points
+                    for (let i = ghostPoints.length - 1; i >= 0; i--) {
+                        ghostPoints[i].life--;
+                        if (ghostPoints[i].life <= 0) {
+                            ghostPoints.splice(i, 1);
+                            dirty = true;
+                        }
+                    }
+
+                    // (Fading pellet animation removed - instant removal is cleaner)
+
+                    // No need for 'scannedPelletsDirty' check anymore, handled by fadeOutPellet
+
+                    if (!geometryDirty && !dirty && ghostPoints.length === 0) return;
+
+                    // Calculate total points
+                    let pelletPointCount = 0;
+                    for (const pts of pelletPointsMap.values()) pelletPointCount += pts.length;
+
+                    const totalPoints = wallPoints.length + ghostPoints.length + pelletPointCount;
+
+                    // Auto-Resize Buffer
+                    if (totalPoints > currentBufferSize) {
+                        currentBufferSize = Math.max(currentBufferSize * 2, totalPoints + 100000);
+                        positions = new Float32Array(currentBufferSize * 3);
+                        colors = new Float32Array(currentBufferSize * 3);
+                        pointGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+                        pointGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
+                    }
+
+                    let idx = 0;
+                    const writePoint = (p, alpha = 1) => {
+                        positions[idx * 3] = p.x;
+                        positions[idx * 3 + 1] = p.y;
+                        positions[idx * 3 + 2] = p.z;
+                        colors[idx * 3] = p.r * alpha;
+                        colors[idx * 3 + 1] = p.g * alpha;
+                        colors[idx * 3 + 2] = p.b * alpha;
+                        idx++;
+                    };
+
+                    // 1. Walls
+                    for (let i = 0; i < wallPoints.length; i++) writePoint(wallPoints[i]);
+                    // 2. Pellets
+                    for (const pts of pelletPointsMap.values()) {
+                        for (let i = 0; i < pts.length; i++) writePoint(pts[i]);
+                    }
+                    // 3. Fading Pellets
+                    for (let i = 0; i < fadingPelletPoints.length; i++) {
+                        const p = fadingPelletPoints[i];
+                        writePoint(p, p.life / 60); // Fade out over time
+                    }
+                    // 4. Ghosts
+                    for (let i = 0; i < ghostPoints.length; i++) {
+                        const p = ghostPoints[i];
+                        writePoint(p, Math.min(1, p.life / 150));
+                    }
+
+                    pointGeometry.setDrawRange(0, idx);
+                    pointGeometry.attributes.position.needsUpdate = true;
+                    pointGeometry.attributes.color.needsUpdate = true;
+                    setPointCount(idx);
+                };
                 let geometryDirty = false;
 
                 const colliders = [];
@@ -365,20 +445,28 @@
                 let pelletCount = 0;
 
                 const wallHeight = 3;
+
+                // OPTIMIZATION: Use InstancedMesh for walls (1 draw call, 1 collider check)
+                let wallCount = 0;
+                maze.forEach(row => row.forEach(cell => { if (cell === 1) wallCount++; }));
+
+                const wallGeometry = new THREE.BoxGeometry(cellSize, wallHeight, cellSize);
+                const wallMaterial = new THREE.MeshBasicMaterial({ visible: false });
+                const wallInstanced = new THREE.InstancedMesh(wallGeometry, wallMaterial, wallCount);
+                wallInstanced.userData = { type: 'wall' };
+
+                const dummy = new THREE.Object3D();
+                let wallIdx = 0;
+
                 for (let row = 0; row < maze.length; row++) {
                     for (let col = 0; col < maze[row].length; col++) {
                         const x = col * cellSize - (maze[0].length * cellSize) / 2;
                         const z = row * cellSize - (maze.length * cellSize) / 2;
 
                         if (maze[row][col] === 1) {
-                            const wall = new THREE.Mesh(
-                                new THREE.BoxGeometry(cellSize, wallHeight, cellSize),
-                                new THREE.MeshBasicMaterial({ visible: false })
-                            );
-                            wall.position.set(x, wallHeight / 2, z);
-                            wall.userData = { type: 'wall', row, col };
-                            scene.add(wall);
-                            colliders.push(wall);
+                            dummy.position.set(x, wallHeight / 2, z);
+                            dummy.updateMatrix();
+                            wallInstanced.setMatrixAt(wallIdx++, dummy.matrix);
                         } else if (maze[row][col] === 2 || maze[row][col] === 3) {
                             const isPower = maze[row][col] === 3;
                             const pellet = new THREE.Mesh(
@@ -397,11 +485,17 @@
                             colliders.push(pellet);
                             pelletMeshes.push(pellet);
                             pelletCount++;
+                            pelletMeshes.push(pellet);
+                            pelletCount++;
                         }
                     }
                 }
+
+                scene.add(wallInstanced);
+                colliders.push(wallInstanced); // Raycaster works with InstancedMesh!
                 setTotalPellets(pelletCount);
 
+                // Simple instant removal - no animation\n                const removeScannedPellet = (id) => {\n                    if (pelletPointsMap.has(id)) {\n                        pelletPointsMap.delete(id);\n                        geometryDirty = true;\n                    }\n                };
                 const ground = new THREE.Mesh(
                     new THREE.PlaneGeometry(100, 100),
                     new THREE.MeshBasicMaterial({ visible: false })
@@ -448,6 +542,7 @@
                 });
 
                 const raycaster = new THREE.Raycaster();
+                raycaster.far = 60; // OPTIMIZATION: Don't scan infinite depth, cap at 60m
                 raycaster.far = 35;
 
                 // Input handlers
@@ -544,16 +639,16 @@
                         const hFOV = 2 * Math.atan(Math.tan(vFOV / 2) * aspect);
 
                         // Scatter within visible screen bounds
-                        for (let i = 0; i < 200; i++) {
+                        for (let i = 0; i < 300; i++) {
                             dirs.push({
                                 h: state.yaw + (Math.random() - 0.5) * hFOV,
                                 v: state.pitch + (Math.random() - 0.5) * vFOV
                             });
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Simplified flashlight beam - fewer points for performance
-                        const maxAngle = 0.1;
-                        const pointCount = 80; // Increased from 40
+                        // Flashlight beam - wider cone to match ghost height
+                        const maxAngle = 0.15;
+                        const pointCount = 240; // Tripled from 80
 
                         // Center point
                         dirs.push({ h: state.yaw, v: state.pitch });
@@ -581,7 +676,7 @@
                         // Archimedes spiral: r = a + b*theta
                         const a = 0.001;
                         const b = 0.015;
-                        const pointsPerFrame = 80;
+                        const pointsPerFrame = 240;
                         const maxTheta = 40;
                         const spawnThreshold = maxTheta * 0.75; // Loop at 75%
 
@@ -680,9 +775,14 @@
                                 }
                             } else if (data.type === 'pellet' && !data.collected) {
                                 // DENSITY BOOST: 20 points per hit for Solid Glow
+                                if (!pelletPointsMap.has(data.id)) {
+                                    pelletPointsMap.set(data.id, []);
+                                }
+                                const pts = pelletPointsMap.get(data.id);
+
                                 for (let p = 0; p < 20; p++) {
                                     const offset = 0.12;
-                                    wallPoints.push({
+                                    pts.push({
                                         x: px + (Math.random() - 0.5) * offset,
                                         y: py + (Math.random() - 0.5) * offset,
                                         z: pz + (Math.random() - 0.5) * offset,
@@ -705,50 +805,7 @@
                     geometryDirty = true;
                 };
 
-                // Update points
-                const updatePoints = () => {
-                    // Fade ghost points (5 seconds)
-                    for (let i = ghostPoints.length - 1; i >= 0; i--) {
-                        ghostPoints[i].life--;
-                        if (ghostPoints[i].life <= 0) {
-                            ghostPoints.splice(i, 1);
-                            geometryDirty = true;
-                        }
-                    }
 
-                    // OPTIMIZATION: Only check for pellet removal if flag is set
-                    if (gameDataRef.current.scannedPelletsDirty) {
-                        for (let i = wallPoints.length - 1; i >= 0; i--) {
-                            if (wallPoints[i].pelletId && gameDataRef.current.collectedPellets.has(wallPoints[i].pelletId)) {
-                                wallPoints.splice(i, 1);
-                                geometryDirty = true;
-                            }
-                        }
-                        gameDataRef.current.scannedPelletsDirty = false;
-                    }
-
-                    if (!geometryDirty) return;
-
-                    const allPoints = [...wallPoints, ...ghostPoints];
-                    if (allPoints.length === 0) return;
-
-                    // Rebuild geometry
-                    const pos = new Float32Array(allPoints.length * 3);
-                    const col = new Float32Array(allPoints.length * 3);
-
-                    allPoints.forEach((p, i) => {
-                        pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
-                        const alpha = p.life !== undefined ? Math.min(1, p.life / 150) : 1;
-                        col[i * 3] = p.r * alpha;
-                        col[i * 3 + 1] = p.g * alpha;
-                        col[i * 3 + 2] = p.b * alpha;
-                    });
-
-                    pointGeometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-                    pointGeometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
-                    geometryDirty = false;
-                    setPointCount(allPoints.length);
-                };
 
                 let time = 0;
 
@@ -810,7 +867,8 @@
                                 setScore(state.score);
                                 setPelletsCollected(state.pelletsCollected);
                                 gameDataRef.current.collectedPellets.add(p.userData.id);
-                                gameDataRef.current.scannedPelletsDirty = true; // Trigger point cleanup
+                                // Remove scanned points instantly
+                                removeScannedPellet(p.userData.id);
 
                                 const idx = colliders.indexOf(p);
                                 if (idx > -1) colliders.splice(idx, 1);
