@@ -384,17 +384,47 @@
                         }
                     }
 
-                    // (Fading pellet animation removed - instant removal is cleaner)
+                    // 3. Fading Pellets (Explode then Implode)
+                    for (let i = fadingPelletPoints.length - 1; i >= 0; i--) {
+                        const p = fadingPelletPoints[i];
 
-                    // No need for 'scannedPelletsDirty' check anymore, handled by fadeOutPellet
+                        // Physics: Drift then Snap (Long explosion, quick implosion)
 
-                    if (!geometryDirty && !dirty && ghostPoints.length === 0) return;
+                        // 1. Momentum (Always apply)
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        p.z += p.vz;
+
+                        // Phase 2: Implosion (Last 15 frames)
+                        if (p.life < 15) {
+                            // Snap back to center
+                            const suction = 0.35; // Very aggressive snap
+                            p.x += (p.tx - p.x) * suction;
+                            p.y += (p.ty - p.y) * suction;
+                            p.z += (p.tz - p.z) * suction;
+
+                            // Kill velocity
+                            p.vx *= 0.5; p.vy *= 0.5; p.vz *= 0.5;
+                        } else {
+                            // Phase 1: Drifting Explosion (Low drag)
+                            p.vx *= 0.90; // Slightly more drag to contain it further
+                            p.vy *= 0.90;
+                            p.vz *= 0.90;
+                        }
+
+                        p.life--;
+                        dirty = true;
+
+                        if (p.life <= 0) fadingPelletPoints.splice(i, 1);
+                    }
+
+                    if (!geometryDirty && !dirty && ghostPoints.length === 0 && fadingPelletPoints.length === 0) return;
 
                     // Calculate total points
                     let pelletPointCount = 0;
                     for (const pts of pelletPointsMap.values()) pelletPointCount += pts.length;
 
-                    const totalPoints = wallPoints.length + ghostPoints.length + pelletPointCount;
+                    const totalPoints = wallPoints.length + ghostPoints.length + pelletPointCount + fadingPelletPoints.length;
 
                     // Auto-Resize Buffer
                     if (totalPoints > currentBufferSize) {
@@ -418,15 +448,18 @@
 
                     // 1. Walls
                     for (let i = 0; i < wallPoints.length; i++) writePoint(wallPoints[i]);
-                    // 2. Pellets
+
+                    // 2. Scanned Pellets (Persistent Glow)
                     for (const pts of pelletPointsMap.values()) {
                         for (let i = 0; i < pts.length; i++) writePoint(pts[i]);
                     }
-                    // 3. Fading Pellets
+
+                    // 3. Fading Pellets (Black Hole Effect)
                     for (let i = 0; i < fadingPelletPoints.length; i++) {
                         const p = fadingPelletPoints[i];
-                        writePoint(p, p.life / 60); // Fade out over time
+                        writePoint(p, Math.max(0, p.life / 25)); // Fade based on 25-frame life
                     }
+
                     // 4. Ghosts
                     for (let i = 0; i < ghostPoints.length; i++) {
                         const p = ghostPoints[i];
@@ -495,7 +528,44 @@
                 colliders.push(wallInstanced); // Raycaster works with InstancedMesh!
                 setTotalPellets(pelletCount);
 
-                // Simple instant removal - no animation\n                const removeScannedPellet = (id) => {\n                    if (pelletPointsMap.has(id)) {\n                        pelletPointsMap.delete(id);\n                        geometryDirty = true;\n                    }\n                };
+                // Fading Pellet Cloud Animation
+                const fadingPelletPoints = []; // { x, y, z, r, g, b, life, vx, vy, vz }
+
+                const fadeOutPellet = (id, playerPos, playerDir) => {
+                    if (!pelletPointsMap.has(id)) return;
+                    const points = pelletPointsMap.get(id);
+                    pelletPointsMap.delete(id);
+
+                    // Calculate pellet center (average of all points)
+                    let cx = 0, cy = 0, cz = 0;
+                    points.forEach(p => { cx += p.x; cy += p.y; cz += p.z; });
+                    cx /= points.length; cy /= points.length; cz /= points.length;
+
+                    // EXPLODE THEN IMPLODE: Initial outward blast, then gravity pulls back
+                    points.forEach(p => {
+                        // Calculate vector FROM center (Explosion direction)
+                        const dx = p.x - cx;
+                        const dy = p.y - cy;
+                        const dz = p.z - cz;
+                        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.01;
+                        const dirX = dx / dist;
+                        const dirY = dy / dist;
+                        const dirZ = dz / dist;
+
+                        // Initial Explosion Speed (Extremely Subtle)
+                        const blast = 0.0015 + Math.random() * 0.0015;
+
+                        fadingPelletPoints.push({
+                            x: p.x, y: p.y, z: p.z,
+                            r: p.r, g: p.g, b: p.b,
+                            life: 30, // Shorter total life (20 drift + 15 snap)
+                            tx: cx, ty: cy, tz: cz, // Target center
+                            vx: dirX * blast,       // Initial Outward Velocity
+                            vy: dirY * blast,
+                            vz: dirZ * blast
+                        });
+                    });
+                };
                 const ground = new THREE.Mesh(
                     new THREE.PlaneGeometry(100, 100),
                     new THREE.MeshBasicMaterial({ visible: false })
@@ -646,9 +716,9 @@
                             });
                         }
                     } else if (state.scanMode === 'beam') {
-                        // Flashlight beam - wider cone to match ghost height
-                        const maxAngle = 0.15;
-                        const pointCount = 240; // Tripled from 80
+                        // Flashlight beam - Larger radius (User Request)
+                        const maxAngle = 0.25; // Widen from 0.15 to 0.25
+                        const pointCount = 300; // Increased density to fill wider cone
 
                         // Center point
                         dirs.push({ h: state.yaw, v: state.pitch });
@@ -867,8 +937,8 @@
                                 setScore(state.score);
                                 setPelletsCollected(state.pelletsCollected);
                                 gameDataRef.current.collectedPellets.add(p.userData.id);
-                                // Remove scanned points instantly
-                                removeScannedPellet(p.userData.id);
+                                // Trigger Fade Out Effect
+                                fadeOutPellet(p.userData.id, gameDataRef.current.playerPos, gameDataRef.current.playerRotation);
 
                                 const idx = colliders.indexOf(p);
                                 if (idx > -1) colliders.splice(idx, 1);
