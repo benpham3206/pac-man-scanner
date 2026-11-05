@@ -77,6 +77,10 @@ A Scanner Sombre-inspired reimagining of the classic PAC-MAN arcade game. Naviga
 - **Web Audio API**: Custom sounds with convolver reverb
 - **Canvas 2D**: Minimap and expanded map rendering
 
+## Checks
+
+Run `node check-pellet-count.mjs` to replay the source's pellet registration and collection logic. The check passes when collecting all maze pellets reaches `win`.
+
 ## 📜 License
 
 MIT License - Feel free to modify and share!
