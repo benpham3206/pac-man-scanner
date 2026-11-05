@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
-const sourcePath = resolve(process.argv[2] ?? fileURLToPath(new URL("./pacman3d.html", import.meta.url)));
+const sourcePath = process.argv[2] ?? new URL("./pacman3d.html", import.meta.url);
 const source = readFileSync(sourcePath, "utf8");
 const mazeMatch = source.match(/const maze = (\[[\s\S]*?\n\s{12}\]);/);
 const cellSizeMatch = source.match(/const cellSize = (\d+);/);
@@ -26,7 +24,7 @@ const cellSize = Number(cellSizeMatch[1]);
 const pellets = [];
 const pelletMeshes = [];
 const colliders = [];
-const scene = { add() {}, remove() {} };
+const scene = { remove() {} };
 const registrationBody = source.slice(registrationStart + "scene.add(pellet);".length, registrationEnd);
 const registerPellet = new vm.Script(`(function () { let pelletCount = 0; ${registrationBody}; return pelletCount; })()`);
 let pelletCount = 0;
@@ -79,8 +77,7 @@ const context = {
     ghosts: [],
     playPowerPelletSound() {},
     playPelletSound() {},
-    geometryDirty: false,
-    document: { pointerLockElement: null, exitPointerLock() {} },
+    document: { pointerLockElement: null },
     setGameState: next => { context.gameState = next; }
 };
 
